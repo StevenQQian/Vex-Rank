@@ -7,6 +7,7 @@ VEX ranking website, ranking scripts, and algorithm documentation.
 - `website/`: React website, API routes, UI components, ranking scripts, database schema and migration, public assets, and dependency lockfile.
 - [Full algorithm documentation](../output/pdf/vex_competitive_rating_full_algorithm.pdf)
 - [Rating specification](../output/pdf/vex_competitive_rating_specification.pdf)
+- [Algorithm flowchart (Lucidchart)](https://lucid.app/lucidchart/155358d5-0829-4c12-bbc1-64ef25e11112/edit?viewport_loc=-510%2C10%2C2540%2C1251%2Cp5&invitationId=inv_cc466bb8-1ad0-44d9-8f3d-b37c83503b93)
 - `build_full_algorithm_pdf.py` and `build_vcr_pdf.py`: editable sources used to generate the algorithm PDFs.
 
 ## Website development
