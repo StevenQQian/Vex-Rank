@@ -1,61 +1,11 @@
+import { vexCollection, vexJson, mapLimit } from '@/lib/vex-api';
 const API_ROOT = 'https://events.vex.com/api/v2';
 
 async function readCache(request:Request){try{return await (globalThis as any).caches?.default?.match(request)}catch{return undefined}}
 async function writeCache(request:Request,response:Response){try{await (globalThis as any).caches?.default?.put(request,response.clone())}catch{}}
 
-const wait = (milliseconds:number) => new Promise(resolve => setTimeout(resolve,milliseconds));
-
-async function fetchJson(url:string, headers:Record<string,string>, attempts=4) {
-  for (let attempt=0;attempt<attempts;attempt++) {
-    try {
-      const response=await fetch(url,{headers});
-      if(response.ok)return await response.json() as any;
-      if(response.status!==429&&response.status<500)return null;
-      const retryAfter=Number(response.headers.get('retry-after'));
-      await wait(Number.isFinite(retryAfter)&&retryAfter>0?retryAfter*1000:250*2**attempt);
-    } catch {
-      if(attempt===attempts-1)return null;
-      await wait(250*2**attempt);
-    }
-  }
-  return null;
-}
-
-async function mapLimit<T,R>(items:T[], limit:number, mapper:(item:T,index:number)=>Promise<R>) {
-  const results=new Array<R>(items.length);
-  let cursor=0;
-  await Promise.all(Array.from({length:Math.min(limit,items.length)},async()=>{
-    while(true){
-      const index=cursor++;
-      if(index>=items.length)break;
-      results[index]=await mapper(items[index],index);
-    }
-  }));
-  return results;
-}
-
-async function getAllTeams(id:string, headers:Record<string,string>) {
-  const first = await fetchJson(`${API_ROOT}/events/${id}/teams?per_page=250`,headers) as { data:any[]; meta:{last_page:number} } | null;
-  if (!first) return [];
-  const pages = Array.from({length:Math.max(0,first.meta.last_page - 1)},(_,index)=>index + 2);
-  const rest = await Promise.all(pages.map(async page => {
-    const response = await fetchJson(`${API_ROOT}/events/${id}/teams?per_page=250&page=${page}`,headers) as {data:any[]} | null;
-    return response?.data ?? [];
-  }));
-  return [...first.data,...rest.flat()];
-}
-
-async function getAll(url:string, headers:Record<string,string>) {
-  const firstUrl=`${API_ROOT}${url}${url.includes('?') ? '&' : '?'}per_page=250`;
-  const first = await fetchJson(firstUrl,headers) as { data:any[]; meta?:{last_page?:number} } | null;
-  if (!first) return [];
-  const pages = Array.from({length:Math.max(0,(first.meta?.last_page ?? 1) - 1)},(_,index)=>index + 2);
-  const rest = await Promise.all(pages.map(async page => {
-    const response = await fetchJson(`${firstUrl}&page=${page}`,headers) as {data:any[]} | null;
-    return response?.data ?? [];
-  }));
-  return [...first.data,...rest.flat()];
-}
+const getAllTeams = (id:string, headers:Record<string,string>) => vexCollection(`${API_ROOT}/events/${id}/teams`,headers);
+const getAll = (url:string, headers:Record<string,string>) => vexCollection(`${API_ROOT}${url}`,headers);
 
 function htmlToText(html:string) {
   return html.replace(/<script[\s\S]*?<\/script>/gi,'').replace(/<style[\s\S]*?<\/style>/gi,'')
@@ -85,18 +35,16 @@ export async function GET(request:Request, context:{params:Promise<{id:string}>}
   if (!/^\d+$/.test(id)) return Response.json({error:'Invalid event.'},{status:400});
   const cached=await readCache(request);if(cached)return cached;
   const headers = {Authorization:`Bearer ${token}`,Accept:'application/json'};
-  const teamsPromise=getAllTeams(id,headers);
-  const eventResponse = await fetch(`${API_ROOT}/events/${id}`,{headers});
-  if (!eventResponse.ok) return Response.json({error:'Event not found.'},{status:404});
-  const event = await eventResponse.json() as any;
+  try {
+  const event = await vexJson(`${API_ROOT}/events/${id}`,headers);
   const divisions = event.divisions ?? [];
   const officialUrl = `https://events.vex.com/robot-competitions/vex-robotics-competition/${event.sku}.html`;
   const organizerPromise=(async()=>{try{const officialResponse=await fetch(officialUrl,{headers:{Accept:'text/html','User-Agent':'VEXRank/1.0'}});if(officialResponse.ok)return organizerSections(await officialResponse.text())}catch{}return{general:'',agenda:'',travel:'',webcast:''}})();
   const [teams,awards,skills,divisionData,organizer] = await Promise.all([
-    teamsPromise,
+    getAllTeams(id,headers),
     getAll(`/events/${id}/awards`,headers),
     getAll(`/events/${id}/skills`,headers),
-    mapLimit(divisions,3,async (division:any) => {
+    mapLimit(divisions,1,async (division:any) => {
       const eliminationRounds='round%5B%5D=3&round%5B%5D=4&round%5B%5D=5&round%5B%5D=6';
       const [rankings,qualificationMatches,eliminationMatches] = await Promise.all([
         getAll(`/events/${id}/divisions/${division.id}/rankings`,headers),
@@ -125,4 +73,8 @@ export async function GET(request:Request, context:{params:Promise<{id:string}>}
     organizer,
   },{headers:{'Cache-Control':'public, max-age=300, s-maxage=300, stale-while-revalidate=1800'}});
   await writeCache(request,response);return response;
+  } catch (error) {
+    console.error('Event data load failed:', error instanceof Error ? error.message : 'Unknown error');
+    return Response.json({error:'Official event data could not be fully loaded. Please retry.'},{status:502,headers:{'Cache-Control':'no-store'}});
+  }
 }

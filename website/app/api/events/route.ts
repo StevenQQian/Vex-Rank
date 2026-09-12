@@ -1,3 +1,5 @@
+import { classifyEvent } from '@/lib/event-classification';
+import { vexCollection } from '@/lib/vex-api';
 import { env } from 'cloudflare:workers';
 import { eventRankLocksSchema } from '@/db/schema';
 
@@ -18,28 +20,6 @@ type VexEvent = {
   location: { city: string | null; region: string | null; country: string | null } | null;
 };
 
-function classifyEvent(name:string, level:string | null) {
-  const value = name.toLowerCase();
-  const officialLevel = String(level ?? '').trim().toLowerCase();
-  const normalizedName = value.replace(/[™®]/g,'').replace(/\s+/g,' ').trim();
-  const eventType = value.includes('league') ? 'League' : value.includes('invitational') ? 'Invitational Tournament' : value.includes('school') ? 'School-Based Tournament' : value.includes('remote skills') ? 'Live Remote Skills' : 'Open Tournament';
-  const isWorldChampionship = /\bvex(?: v5)? robotics world championship\b/.test(normalizedName)
-    && !/\b(scrimmage|checkup|practice)\b/.test(normalizedName)
-    && !/\bjrotc\b/.test(normalizedName);
-  const levelClass = /\bjrotc\b.*\bbrigade championship\b|\bbrigade championship\b.*\bjrotc\b/.test(normalizedName) ? 'JROTC Brigade Championship'
-    : /\bjrotc\b.*\bnational championship\b|\bnational championship\b.*\bjrotc\b/.test(normalizedName) ? 'JROTC National Championship'
-    : /\bconference championship\b/.test(normalizedName) ? 'Conference Championship'
-    : /\bspotlight\b/.test(normalizedName) ? 'Spotlight Event'
-    : /\bshowcase\b/.test(normalizedName) ? 'Showcase Event'
-    : officialLevel === 'signature' ? 'Signature Event'
-    : isWorldChampionship ? 'World Championship'
-    : /\bnational championship\b/.test(normalizedName) ? 'National Championship'
-    : /\b(?:state|provincial|event region|regional) championship\b/.test(normalizedName) ? 'Event Region Championship'
-    : 'None';
-  const format = value.includes('remote') || value.includes('virtual') ? 'Remote' : 'In-Person';
-  const grade = value.includes('middle school') || value.includes(' ms ') ? 'Middle School' : value.includes('high school') || value.includes(' hs ') ? 'High School' : 'Mixed';
-  return { eventType, levelClass, format, grade, worldQualifier: officialLevel === 'world' };
-}
 
 export async function GET(request:Request) {
   const token = process.env.ROBOT_EVENTS_API_TOKEN;
@@ -50,17 +30,9 @@ export async function GET(request:Request) {
   const seasonId=/^\d+$/.test(requestedSeason)?requestedSeason:'204';
   const url = `${API_ROOT}/events?season%5B%5D=${seasonId}&per_page=250`;
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/json' };
-  const response = await fetch(url, { headers });
-  if (!response.ok) return Response.json({ error: 'Event.VEX data is temporarily unavailable.' }, { status: 502 });
-
-  const first = await response.json() as { data: VexEvent[]; meta: { last_page: number } };
-  const remainingPages = Array.from({ length: Math.max(0, first.meta.last_page - 1) }, (_, index) => index + 2);
-  const remaining = await Promise.all(remainingPages.map(async page => {
-    const pageResponse = await fetch(`${url}&page=${page}`, { headers });
-    if (!pageResponse.ok) return [] as VexEvent[];
-    return ((await pageResponse.json()) as { data: VexEvent[] }).data;
-  }));
-  const allEvents = [...first.data, ...remaining.flat()];
+  let allEvents:VexEvent[];
+  try { allEvents = await vexCollection(url,headers); }
+  catch { return Response.json({error:'The event calendar could not be fully loaded. Please retry.'},{status:502,headers:{'Cache-Control':'no-store'}}); }
   const currentEvents=allEvents.filter(event=>event.program?.id===1&&String(event.season?.id)===seasonId);
   const signatures=currentEvents.filter(event=>classifyEvent(event.name,event.level).levelClass==='Signature Event');
   const teamCounts=new Map<number,number>();let cursor=0;

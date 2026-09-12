@@ -1,3 +1,4 @@
+import { vexCollection } from '@/lib/vex-api';
 import seasonGradeOverrides from '@/lib/season-grade-overrides.json';
 
 const API_ROOT = 'https://events.vex.com/api/v2';
@@ -8,17 +9,7 @@ const gradeFromOrganization=(value:string)=>/\bmiddle school\b|\bjunior high\b|\
 async function readCache(request:Request){try{return await (globalThis as any).caches?.default?.match(request)}catch{return undefined}}
 async function writeCache(request:Request,response:Response){try{await (globalThis as any).caches?.default?.put(request,response.clone())}catch{}}
 
-async function getAll(url: string, headers: Record<string,string>, maxPages = 20) {
-  const first = await fetch(url, { headers });
-  if (!first.ok) return [];
-  const payload = await first.json() as { data:any[]; meta?:{last_page?:number} };
-  const pages = Math.min(Number(payload.meta?.last_page ?? 1), maxPages);
-  const rest = pages > 1 ? await Promise.all(Array.from({length:pages-1}, async (_,index) => {
-    const response = await fetch(`${url}${url.includes('?')?'&':'?'}page=${index+2}`, { headers });
-    return response.ok ? ((await response.json() as {data:any[]}).data ?? []) : [];
-  })) : [];
-  return [...(payload.data ?? []), ...rest.flat()];
-}
+const getAll = (url:string,headers:Record<string,string>,_maxPages?:number) => vexCollection(url,headers);
 
 export async function GET(request: Request, context: { params: Promise<{number:string}> | {number:string} }) {
   const token = process.env.ROBOT_EVENTS_API_TOKEN;
@@ -30,6 +21,7 @@ export async function GET(request: Request, context: { params: Promise<{number:s
   const requestUrl=new URL(request.url);const requestedSeason=requestUrl.searchParams.get('season');const requestedTeamId=requestUrl.searchParams.get('teamId');
   const seasonFilter=requestedSeason&&/^\d+$/.test(requestedSeason)?`&season%5B%5D=${requestedSeason}`:'';
   const headers = { Authorization:`Bearer ${token}`, Accept:'application/json' };
+  try {
   let team:any=null;
   if(requestedTeamId&&/^\d+$/.test(requestedTeamId)){try{const response=await fetch(`${API_ROOT}/teams/${requestedTeamId}`,{headers});if(response.ok){const payload=await response.json() as any;const candidate=payload.data??payload;if(String(candidate.number).toUpperCase()===number)team=candidate}}catch{}}
   if(!team){const teams=await getAll(`${API_ROOT}/teams?number%5B%5D=${encodeURIComponent(number)}&program%5B%5D=1&per_page=100`,headers,2);team=teams.find((entry:any)=>String(entry.number).toUpperCase()===number)}
@@ -88,10 +80,11 @@ export async function GET(request: Request, context: { params: Promise<{number:s
     events:sortedEvents.map((event:any)=>({id:event.id,sku:event.sku,name:event.name,start:event.start,end:event.end,season:event.season?.name||'Unknown season',seasonId:event.season?.id,level:event.level,location:[event.location?.city,event.location?.region,event.location?.country].filter(Boolean).join(', '),elimination:eliminationByEvent.get(event.id)||'No elimination result'})),
     rankings:rankings.map((row:any)=>{const event=eventMap.get(row.event?.id) as any;return{event:row.event?.name||row.event?.code||'Official event',eventId:row.event?.id,season:event?.season?.name||'',seasonId:event?.season?.id,division:row.division?.name||'',rank:row.rank,wins:row.wins,losses:row.losses,ties:row.ties,wp:row.wp,ap:row.ap,sp:row.sp,highScore:row.high_score}}),
     awards:awards.map((award:any)=>{const event=eventMap.get(award.event?.id) as any;return{title:award.title||award.name,event:award.event?.name||'Official event',eventId:award.event?.id,season:event?.season?.name||'',seasonId:event?.season?.id}}),
-    skills:skills.sort((a:any,b:any)=>Number(b.score)-Number(a.score)).map((skill:any)=>({event:skill.event?.name||'Official event',eventId:skill.event?.id,type:skill.type,score:skill.score,attempts:skill.attempts,rank:skill.rank,season:skill.season?.name||'',seasonId:skill.season?.id})),
+    skills:skills.sort((a:any,b:any)=>Number(b.score)-Number(a.score)).map((skill:any)=>({event:skill.event?.name||'Official event',eventId:skill.event?.id,type:skill.type,score:skill.score,attempts:skill.attempts,rank:skill.rank,season:skill.season?.name||'',seasonId:skill.season?.id??(eventMap.get(skill.event?.id) as any)?.season?.id})),
     seasonGrades,
     ratingHistory,
     loadedSeasonIds:requestedSeason?[Number(requestedSeason)]:[...seasonIds].map(Number),
   },{headers:{'Cache-Control':'public, max-age=900, s-maxage=1800, stale-while-revalidate=7200'}});
   await writeCache(request,response);return response;
+  } catch { return Response.json({error:'Team history could not be fully loaded. Please retry.'},{status:502,headers:{'Cache-Control':'no-store'}}); }
 }
