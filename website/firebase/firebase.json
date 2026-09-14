@@ -1,0 +1,4 @@
+{
+  "functions": [{"source":"functions","codebase":"vexrank-test","runtime":"nodejs22","predeploy":["node functions/build.mjs"],"ignore":["node_modules","src","build.mjs","*.log"]}],
+  "firestore": {"rules":"firestore.rules","indexes":"firestore.indexes.json"}
+}

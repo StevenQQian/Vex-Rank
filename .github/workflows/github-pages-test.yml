@@ -1,0 +1,44 @@
+name: VEXRank test deployment
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: vexrank-test-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: website/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: website
+      - name: Verify test API is deployed
+        run: curl --fail --retry 2 https://us-central1-vexrank-test.cloudfunctions.net/api/health
+      - name: Build test website
+        run: pnpm exec vite build --config vite.pages.config.ts
+        working-directory: website
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: website/dist-pages
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy test website
+        id: deployment
+        uses: actions/deploy-pages@v4

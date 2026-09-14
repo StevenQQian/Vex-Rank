@@ -1,4 +1,5 @@
 'use client';
+import { siteFetch } from '@/lib/client-fetch';
 import { bracketRound } from '@/lib/bracket';
 
 import { useEffect, useMemo, useState } from 'react';
@@ -15,7 +16,7 @@ const teamHistoryCache=new Map<string,any>();
 const requestCache=new Map<string,Promise<any>>();
 const cacheTimes=new Map<string,number>();
 const eventDetailUrl=(id:string|number)=>`/api/events/${id}?results=v49`;
-async function cachedJson(url:string,cache:Map<string,any>,key:string){if(cache.has(key)&&Date.now()-(cacheTimes.get(url)??0)<300000)return cache.get(key);if(requestCache.has(url))return requestCache.get(url);const request=fetch(url,{signal:AbortSignal.timeout(60000)}).then(async response=>{const data:any=await response.json();if(!response.ok)throw new Error(data.error||'Request failed');cache.set(key,data);cacheTimes.set(url,Date.now());return data}).catch(error=>{if(error?.name==='TimeoutError')throw new Error('Official data took too long to load. Please retry.');throw error}).finally(()=>requestCache.delete(url));requestCache.set(url,request);return request}
+async function cachedJson(url:string,cache:Map<string,any>,key:string){if(cache.has(key)&&Date.now()-(cacheTimes.get(url)??0)<300000)return cache.get(key);if(requestCache.has(url))return requestCache.get(url);const request=siteFetch(url,{signal:AbortSignal.timeout(60000)}).then(async response=>{const data:any=await response.json();if(!response.ok)throw new Error(data.error||'Request failed');cache.set(key,data);cacheTimes.set(url,Date.now());return data}).catch(error=>{if(error?.name==='TimeoutError')throw new Error('Official data took too long to load. Please retry.');throw error}).finally(()=>requestCache.delete(url));requestCache.set(url,request);return request}
 const prefetchEvent=(id:string|number)=>cachedJson(eventDetailUrl(id),eventDetailCache,String(id)).catch(()=>undefined);
 const teamCacheKey=(number:string,seasonId?:string|number,teamId?:string|number)=>`${number.toUpperCase()}:${seasonId??'all'}:${teamId??'search'}`;
 const teamProfileUrl=(number:string,seasonId?:string|number,teamId?:string|number)=>`/api/teams/${encodeURIComponent(number)}?profile=v8${seasonId?`&season=${seasonId}`:''}${teamId?`&teamId=${teamId}`:''}`;
@@ -126,7 +127,7 @@ export default function Home() {
     let active = true;
     const seasonId=({'2026–27: Override':'204','2025–26: Push Back':'197','2024–25: High Stakes':'190','2023–24: Over Under':'181'} as Record<string,string>)[eventExtras.season]??'204';
     setEventsLoading(true);setEventsError('');setLiveEvents([]);setEventsLive(false);
-    fetch(`/api/events?season=${seasonId}&classification=v49`).then(response => response.ok ? response.json() : Promise.reject()).then((payload:any) => {
+    siteFetch(`/api/events?season=${seasonId}&classification=v49`).then(response => response.ok ? response.json() : Promise.reject()).then((payload:any) => {
       if (active && Array.isArray(payload.events)) { setLiveEvents(payload.events); setEventsLive(true); }
     }).catch(() => {if(active)setEventsError('Events could not be loaded. Please retry.');}).finally(()=>{if(active)setEventsLoading(false)});
     return () => { active = false; };
@@ -136,7 +137,7 @@ export default function Home() {
     if(!['home','rankings','stats','teams'].includes(view)||rankingsMeta)return;
     let active=true;
     setRankingsError('');
-    fetch('/api/rankings?data=v49').then(response=>response.ok?response.json():Promise.reject()).then((payload:any)=>{if(active&&Array.isArray(payload.rankings)){setLiveTeams(payload.rankings);setRankingsMeta(payload)}}).catch(()=>{if(active)setRankingsError('Rankings are temporarily unavailable. Please retry.');});
+    siteFetch('/api/rankings?data=v49').then(response=>response.ok?response.json():Promise.reject()).then((payload:any)=>{if(active&&Array.isArray(payload.rankings)){setLiveTeams(payload.rankings);setRankingsMeta(payload)}}).catch(()=>{if(active)setRankingsError('Rankings are temporarily unavailable. Please retry.');});
     return()=>{active=false};
   },[rankingsRetry,view]);
 
@@ -338,7 +339,7 @@ function simplifyGeneralInfo(text:string) {
 
 function RankingsView({ teams: rows, meta, openTeam, savedState, setSavedState }: { teams: any[]; meta:any; openTeam:(t:any)=>void;savedState:any;setSavedState:(state:any)=>void }) {
   const [season,setSeason]=useState(savedState.season??'2026–27 Override');const [rankingCountry,setRankingCountry]=useState(savedState.country??'All');const [rankingRegion,setRankingRegion]=useState(savedState.region??'All');const [gradeList,setGradeList]=useState(savedState.grade??'All teams');const [rankingSearch,setRankingSearch]=useState(savedState.search??'');const [archives,setArchives]=useState<Record<string,any>>({});const [archiveError,setArchiveError]=useState('');const [archiveRetry,setArchiveRetry]=useState(0);const [visibleCount,setVisibleCount]=useState(savedState.visibleCount??100);
-  useEffect(()=>{if(season==='2026–27 Override'||archives[season])return;let active=true;setArchiveError('');const base='/rankings-2025-26.json?v=6';fetch(base).then(response=>response.ok?response.json():Promise.reject()).then((data:any)=>{if(active&&Array.isArray(data.rankings))setArchives(old=>({...old,[season]:data}))}).catch(()=>{if(active)setArchiveError('The season archive could not be loaded. Please retry.');});return()=>{active=false}},[season,archives,archiveRetry]);
+  useEffect(()=>{if(season==='2026–27 Override'||archives[season])return;let active=true;setArchiveError('');const base='/rankings-2025-26.json?v=6';siteFetch(base).then(response=>response.ok?response.json():Promise.reject()).then((data:any)=>{if(active&&Array.isArray(data.rankings))setArchives(old=>({...old,[season]:data}))}).catch(()=>{if(active)setArchiveError('The season archive could not be loaded. Please retry.');});return()=>{active=false}},[season,archives,archiveRetry]);
   useEffect(()=>setVisibleCount(100),[season,rankingCountry,rankingRegion,gradeList,rankingSearch]);
   useEffect(()=>setSavedState({season,country:rankingCountry,region:rankingRegion,grade:gradeList,search:rankingSearch,visibleCount}),[season,rankingCountry,rankingRegion,gradeList,rankingSearch,visibleCount,setSavedState]);
   const historical=archives[season];const activeRows=season==='2026–27 Override'?rows:(historical?.rankings??[]);const activeMeta=season==='2026–27 Override'?meta:historical;const countries=['All',...Array.from(new Set(activeRows.map((team:any)=>team.country).filter(Boolean))).sort()] as string[];const regionOf=(team:any)=>team.eventRegion??String(team.region??'Unassigned').split(',')[0].trim();const regions=['All',...Array.from(new Set(activeRows.filter((team:any)=>rankingCountry==='All'||team.country===rankingCountry).map(regionOf).filter(Boolean))).sort()] as string[];const filteredRows=activeRows.filter((team:any)=>(gradeList==='All teams'||team.grade===gradeList)&&(rankingCountry==='All'||team.country===rankingCountry)&&(rankingRegion==='All'||regionOf(team)===rankingRegion)&&(!rankingSearch||`${team.number} ${team.name}`.toLowerCase().includes(rankingSearch.toLowerCase())));const visibleRows=filteredRows.slice(0,visibleCount);const isFullArchive=season==='2025–26 Push Back';
@@ -361,8 +362,8 @@ function StatRankingsView({ teams: rows, openTeam }: { teams: any[]; openTeam:(t
   const [skills,setSkills]=useState<any[]>([]);
   const [visibleCount,setVisibleCount]=useState(100);
   const skillCategory=category.includes('Skills');
-  useEffect(()=>{if(season==='2025–26 Push Back'&&!historical)fetch('/rankings-2025-26.json').then(r=>r.json()).then(setHistorical).catch(()=>undefined)},[season,historical]);
-  useEffect(()=>{let active=true;setSkills([]);fetch(`/api/skills?season=${season==='2025–26 Push Back'?'197':'204'}`).then(r=>r.ok?r.json():Promise.reject()).then((data:any)=>{if(active)setSkills(data.rankings??[])}).catch(()=>{if(active)setSkills([])});return()=>{active=false}},[season]);
+  useEffect(()=>{if(season==='2025–26 Push Back'&&!historical)siteFetch('/rankings-2025-26.json').then(r=>r.json()).then(setHistorical).catch(()=>undefined)},[season,historical]);
+  useEffect(()=>{let active=true;setSkills([]);siteFetch(`/api/skills?season=${season==='2025–26 Push Back'?'197':'204'}`).then(r=>r.ok?r.json():Promise.reject()).then((data:any)=>{if(active)setSkills(data.rankings??[])}).catch(()=>{if(active)setSkills([])});return()=>{active=false}},[season]);
   useEffect(()=>setVisibleCount(100),[category,statRegion,season]);
   const matchRows=season==='2025–26 Push Back'?(historical?.rankings??[]):rows;
   const winRate=(team:any)=>{const [wins,,ties]=String(team.record??'0–0–0').split('–').map(Number);return team.matches?((wins+(ties||0)*.5)/team.matches)*100:0};
