@@ -50,6 +50,13 @@
 
 body { font-family: var(--font-geist), Arial, Helvetica, sans-serif; }
 
+html { color-scheme: dark; }
+button, a, input, select { touch-action: manipulation; }
+button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, [tabindex]:focus-visible { outline: 2px solid #38bdf8; outline-offset: 3px; }
+main section, article, aside { min-width: 0; }
+h1, h2, h3 { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+
 * {
   scrollbar-width: thin;
   scrollbar-color: rgb(75 82 94) rgb(8 10 14);
@@ -223,7 +230,7 @@ body { font-family: var(--font-geist), Arial, Helvetica, sans-serif; }
 
 .bracket-round-matches {
   display: flex;
-  height: 24rem;
+  height: var(--bracket-height, 28rem);
   flex-direction: column;
 }
 

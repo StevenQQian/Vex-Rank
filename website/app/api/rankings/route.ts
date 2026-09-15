@@ -1,3 +1,4 @@
+import { vexCollection, mapLimit } from '@/lib/vex-api';
 import seasonGradeOverrides from '@/lib/season-grade-overrides.json';
 
 const API_ROOT='https://events.vex.com/api/v2';
@@ -26,18 +27,15 @@ export async function GET(request:Request){
   const requested=new URL(request.url).searchParams.get('season')??'204';const seasonId=SEASONS[requested]?requested:'204';const season=SEASONS[seasonId];
   const wallClock=new Date();const cutoff=new Date(Math.min(wallClock.getTime(),new Date(season.end).getTime()));
   const eventsUrl=`${API_ROOT}/events?season%5B%5D=${seasonId}&per_page=250`;
-  const eventsResponse=await fetchWithRetry(eventsUrl,headers);
-  if(!eventsResponse.ok)return Response.json({error:'Rankings are temporarily unavailable.'},{status:502});
-  const eventsPayload=await eventsResponse.json() as {data:any[];meta?:{last_page?:number}};
-  let eventRows=eventsPayload.data;if((eventsPayload.meta?.last_page??1)>1){const last=await fetchWithRetry(`${eventsUrl}&page=${eventsPayload.meta?.last_page}`,headers);if(last.ok){const lastRows=(await last.json() as {data:any[]}).data;eventRows=[...new Map([...eventRows,...lastRows].map(event=>[event.id,event])).values()]}}
-  const completed=eventRows.filter(event=>event.program?.id===1&&String(event.season?.id)===seasonId&&new Date(event.end)<=cutoff&&event.divisions?.length).sort((a,b)=>String(a.end).localeCompare(String(b.end))).slice(-36);
-  const matchGroups=await Promise.all(completed.flatMap(event=>event.divisions.slice(0,2).map(async(division:any)=>{
-    const response=await fetch(`${API_ROOT}/events/${event.id}/divisions/${division.id}/matches?per_page=250`,{headers});
-    if(!response.ok)return[];
-    const payload=await response.json() as {data:any[]};
-    return payload.data.map(match=>({...match,eventId:event.id,evidenceWeight:eventWeight(event)*recencyWeight(event.end,cutoff),gradeHint:gradeFromContext(`${event.name} ${division.name}`)}));
-  })));
-  const matches=matchGroups.flat().filter(match=>match.alliances?.length===2&&match.alliances.every((alliance:any)=>Number.isFinite(alliance.score)&&alliance.teams?.length));
+  try {
+  const eventRows=await vexCollection(eventsUrl,headers);
+  const completed=eventRows.filter(event=>event.program?.id===1&&String(event.season?.id)===seasonId&&new Date(event.end)<=cutoff&&event.divisions?.length&&!/cancell?ed/i.test(event.name)).sort((a,b)=>String(a.end).localeCompare(String(b.end))).slice(-36);
+  const jobs=completed.flatMap(event=>event.divisions.map((division:any)=>({event,division})));
+  const matchGroups=await mapLimit(jobs,3,async({event,division})=>{
+    const data=await vexCollection(`${API_ROOT}/events/${event.id}/divisions/${division.id}/matches?round%5B%5D=2&round%5B%5D=3&round%5B%5D=4&round%5B%5D=5&round%5B%5D=6`,headers);
+    return data.map(match=>({...match,eventId:event.id,evidenceWeight:eventWeight(event)*recencyWeight(event.end,cutoff),gradeHint:gradeFromContext(`${event.name} ${division.name}`)}));
+  });
+  const matches=matchGroups.flat().filter(match=>match.alliances?.length===2&&match.alliances.every((alliance:any)=>Number.isFinite(alliance.score)&&alliance.score>=0&&alliance.teams?.length));
   matches.sort((a,b)=>String(a.scheduled??a.updated_at).localeCompare(String(b.scheduled??b.updated_at)));
   const states=new Map<number,TeamState>();
   const stateFor=(team:any)=>{if(!states.has(team.id))states.set(team.id,{id:team.id,number:team.name,rating:1500,matches:0,wins:0,losses:0,ties:0,pointsFor:0,pointsAgainst:0,events:new Set(),middleGradeEvents:new Set(),highGradeEvents:new Set()});return states.get(team.id)!};
@@ -51,9 +49,10 @@ export async function GET(request:Request){
   }
   const rated=[...states.values()].filter(team=>team.matches>=4).map(team=>{const confidence=Math.max(35,Math.round(120/Math.sqrt(Math.max(1,team.matches/4))));return{...team,events:team.events.size,confidence,displayedStrength:team.rating-confidence}}).sort((a,b)=>b.displayedStrength-a.displayedStrength);
   const groups=Array.from({length:Math.ceil(rated.length/100)},(_,index)=>rated.slice(index*100,index*100+100));
-  const detailPayloads=await Promise.all(groups.map(async group=>{const ids=group.map(team=>`id%5B%5D=${team.id}`).join('&');const response=await fetch(`${API_ROOT}/teams?${ids}&per_page=100`,{headers});return response.ok?(await response.json() as {data:any[]}).data:[]}));
+  const detailPayloads=await mapLimit(groups,3,async group=>{const ids=group.map(team=>`id%5B%5D=${team.id}`).join('&');return vexCollection(`${API_ROOT}/teams?${ids}`,headers)});
   const official=new Map(detailPayloads.flat().map(team=>[team.id,team]));
-  const rankings=rated.map((team,index)=>{const info=official.get(team.id) as any;const games=Math.max(1,team.matches);const opr=team.pointsFor/games/2;const dpr=team.pointsAgainst/games/2;const eventGrade=team.middleGradeEvents.size===team.highGradeEvents.size?null:team.middleGradeEvents.size>team.highGradeEvents.size?'Middle School':'High School';const number=info?.number??team.number;const verifiedGrade=(seasonGradeOverrides as Record<string,Record<string,string>>)[seasonId]?.[number];const grade=verifiedGrade??eventGrade??gradeFromOrganization(info?.organization)??info?.grade??'Unknown';return{rank:index+1,id:team.id,number,name:info?.team_name??info?.organization??team.number,region:[info?.location?.region,info?.location?.country].filter(Boolean).join(', ')||'Unassigned',eventRegion:info?.location?.region||info?.location?.country||'Unassigned',country:info?.location?.country||'Unassigned',rating:Math.round(team.rating),confidence:team.confidence,change:0,record:`${team.wins}–${team.losses}–${team.ties}`,events:team.events,opr:Number(opr.toFixed(1)),dpr:Number(dpr.toFixed(1)),ccwm:Number((opr-dpr).toFixed(1)),auto:0,ase:0,consistency:Math.max(0,Math.min(100,Math.round(100-team.confidence/2))),skills:0,form:[],matches:team.matches,grade,organization:info?.organization??'',robot:info?.robot_name??''}});
+  const rankings=rated.map((team,index)=>{const info=official.get(team.id) as any;const games=Math.max(1,team.matches);const opr=team.pointsFor/games/2;const dpr=team.pointsAgainst/games/2;const eventGrade=team.middleGradeEvents.size===team.highGradeEvents.size?null:team.middleGradeEvents.size>team.highGradeEvents.size?'Middle School':'High School';const number=info?.number??team.number;const verifiedGrade=(seasonGradeOverrides as Record<string,Record<string,string>>)[seasonId]?.[number];const grade=verifiedGrade??eventGrade??gradeFromOrganization(info?.organization)??info?.grade??'Unknown';return{rank:index+1,id:team.id,number,name:info?.team_name??info?.organization??team.number,region:[info?.location?.region,info?.location?.country].filter(Boolean).join(', ')||'Unassigned',eventRegion:info?.location?.region||info?.location?.country||'Unassigned',country:info?.location?.country||'Unassigned',rating:Math.round(team.rating),confidence:team.confidence,change:0,record:`${team.wins}–${team.losses}–${team.ties}`,events:team.events,opr:Number(opr.toFixed(1)),dpr:Number(dpr.toFixed(1)),ccwm:Number((opr-dpr).toFixed(1)),auto:0,ase:0,consistency:Math.max(0,Math.min(100,Math.round(100-team.confidence/2))),skills:0,form:[],seasonId:Number(seasonId),season:season.label,matches:team.matches,grade,organization:info?.organization??'',robot:info?.robot_name??''}});
   const response=Response.json({rankings,eventsProcessed:completed.length,matchesProcessed:matches.length,method:'VCR recency-weighted match model · 75-day evidence half-life',season:season.label,updatedAt:new Date().toISOString()},{headers:{'Cache-Control':'public, max-age=900, s-maxage=1800, stale-while-revalidate=7200'}});
   await writeCache(request,response);return response;
+  } catch { return Response.json({error:'Rankings could not be fully loaded. Please retry.'},{status:502,headers:{'Cache-Control':'no-store'}}); }
 }

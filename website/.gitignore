@@ -37,3 +37,10 @@ next-env.d.ts
 /outputs/
 /work/
 /.ranking-cache/
+/.sites-runtime/
+/.site-version*.tar.gz
+/*.tsbuildinfo
+/dist-pages/
+/firebase/functions/lib/
+**/node_modules/
+firebase-debug.log*
