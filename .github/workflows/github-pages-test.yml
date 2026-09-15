@@ -21,8 +21,11 @@ jobs:
           cache-dependency-path: website/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: website
+      - name: Check data regressions
+        run: node --test tests/data-regressions.test.mjs
+        working-directory: website
       - name: Verify test API is deployed
-        run: curl --fail --retry 2 https://us-central1-vexrank-test.cloudfunctions.net/api/health
+        run: curl --fail --retry 2 https://vexrank-api-test.vexrank-eason.workers.dev/api/health
       - name: Build test website
         run: pnpm exec vite build --config vite.pages.config.ts
         working-directory: website

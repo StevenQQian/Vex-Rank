@@ -9,9 +9,10 @@ export default defineConfig({
   publicDir:fileURLToPath(new URL('./public',import.meta.url)),
   resolve:{alias:{'@':fileURLToPath(new URL('.',import.meta.url))}},
   plugins:[react()],
+  server:{host:'127.0.0.1',port:5173,strictPort:true,proxy:{'/api':{target:'https://vexrank-api-test.vexrank-eason.workers.dev',changeOrigin:true}}},
   css:{postcss:{plugins:[tailwindcss()]}},
   define:{
-    __VEX_API_BASE__:JSON.stringify(process.env.VEX_API_BASE || 'https://us-central1-vexrank-test.cloudfunctions.net/api'),
+    __VEX_API_BASE__:JSON.stringify(process.env.VEX_API_BASE || 'https://vexrank-api-test.vexrank-eason.workers.dev'),
     __VEX_ASSET_BASE__:JSON.stringify('/Vex-Rank/'),
   },
   build:{outDir:'../dist-pages',emptyOutDir:true},

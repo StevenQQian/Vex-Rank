@@ -1,5 +1,7 @@
 # VEXRank test deployment
 
+This Firebase API approach was superseded by the free Cloudflare Workers + D1 deployment. See `../cloudflare/DEPLOYMENT.md`. Firebase remains on Spark; its database rules are deployed, but the Firebase API was never deployed.
+
 - Firebase project: `vexrank-test`
 - Project number: `302355000355`
 - Frontend: GitHub Pages, repository `easonli29/Vex-Rank`
