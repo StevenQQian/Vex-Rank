@@ -3,6 +3,7 @@ import { GET as event } from '../app/api/events/[id]/route';
 import { GET as team } from '../app/api/teams/[number]/route';
 import { GET as rankings } from '../app/api/rankings/route';
 import { GET as skills } from '../app/api/skills/route';
+import { VCR_VERSION } from '../lib/vcr3.mjs';
 
 interface Env { DB: D1Database; ROBOT_EVENTS_API_TOKEN: string }
 
@@ -17,6 +18,7 @@ function canonicalUrl(request: Request) {
       url.searchParams.set(key, value);
     }
   }
+  if (url.pathname === '/api/rankings' || url.pathname.startsWith('/api/teams/')) url.searchParams.set('model', VCR_VERSION);
   return url;
 }
 
@@ -43,7 +45,7 @@ export default {
     if (request.method !== 'GET') return cors(Response.json({ error: 'Method not allowed' }, { status: 405, headers: { Allow: 'GET, OPTIONS' } }));
     if (new URL(request.url).pathname === '/api/health') {
       await env.DB.prepare('SELECT 1').first();
-      return cors(Response.json({ status: 'ok', environment: 'test', database: 'D1' }));
+      return cors(Response.json({ status: 'ok', environment: 'test', database: 'D1', modelVersion: VCR_VERSION }));
     }
     const url = canonicalUrl(request);
     if (!url) return cors(Response.json({ error: 'Unsupported route or query' }, { status: 400 }));
@@ -66,3 +68,4 @@ export default {
     }
   },
 };
+
