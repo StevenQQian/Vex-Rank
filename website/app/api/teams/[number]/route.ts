@@ -1,9 +1,9 @@
 import { vexCollection } from '@/lib/vex-api';
 import seasonGradeOverrides from '@/lib/season-grade-overrides.json';
+import { processCompletedEvent, VCR_VERSION } from '@/lib/vcr3.mjs';
 
 const API_ROOT = 'https://events.vex.com/api/v2';
 const CURRENT_SEASON = 204;
-const eventWeight=(event:any)=>event.level==='World'?1.85:event.level==='Signature'?1.35:['National','State'].includes(event.level)?1.15:.82;
 const gradeFromContext=(value:string)=>{const text=String(value??'').toLowerCase().replace(/[_/-]+/g,' ');const middle=/\bmiddle school\b|\bjunior high\b|\bjr\.? high\b|\bms\b/.test(text);const high=/\bhigh school\b|\bsenior high\b|\bhs\b/.test(text);return middle&&!high?'Middle School':high&&!middle?'High School':null};
 const gradeFromOrganization=(value:string)=>/\bmiddle school\b|\bjunior high\b|\bjr\.? high\b|\bintermediate school\b|\belementary school\b/i.test(String(value??''))?'Middle School':/\bhigh school\b|\bsenior high\b|\bsecondary school\b/i.test(String(value??''))?'High School':null;
 async function readCache(request:Request){try{return await (globalThis as any).caches?.default?.match(request)}catch{return undefined}}
@@ -61,20 +61,13 @@ export async function GET(request: Request, context: { params: Promise<{number:s
   for(const row of rankings){const event=eventMap.get(row.event?.id) as any;const seasonId=Number(event?.season?.id);const hint=gradeFromContext(`${event?.name??''} ${row.division?.name??''}`);if(!seasonId||!hint)continue;const evidence=evidenceFor(seasonId);(hint==='Middle School'?evidence.middle:evidence.high).add(event.id)}
   const organizationGrade=gradeFromOrganization(team.organization);
   const seasonGrades=Object.fromEntries([...seasonIds].map(value=>{const seasonId=Number(value);const evidence=evidenceFor(seasonId);const eventGrade=evidence.middle.size===evidence.high.size?null:evidence.middle.size>evidence.high.size?'Middle School':'High School';const verifiedGrade=(seasonGradeOverrides as Record<string,Record<string,string>>)[String(seasonId)]?.[team.number];return[seasonId,verifiedGrade??eventGrade??organizationGrade??team.grade??'Unknown']}));
-  const ratingBySeason=new Map<number,number>();
-  const ratingHistory:any[]=[];
+  const ratingStates=new Map<number,any>(),ratingHistoryByTeam=new Map<number,any[]>();
   for(const event of [...sortedEvents].sort((a:any,b:any)=>String(a.start).localeCompare(String(b.start)))){
     const seasonId=Number(event.season?.id);if(!seasonId)continue;
-    let rating=ratingBySeason.get(seasonId)??1500;let change=0;let matchCount=0;
     const eventMatches=(matchesByEvent.get(event.id)??[]).filter((match:any)=>match.started).sort((a:any,b:any)=>String(a.scheduled??a.started).localeCompare(String(b.scheduled??b.started)));
-    for(const match of eventMatches){
-      const own=match.alliances?.find((alliance:any)=>alliance.teams?.some((entry:any)=>entry.team?.id===team.id&&!entry.sitting));const opponent=match.alliances?.find((alliance:any)=>alliance!==own);
-      if(!own||!opponent||!Number.isFinite(own.score)||!Number.isFinite(opponent.score))continue;
-      const expected=1/(1+10**((1500-rating)/400));const actual=own.score===opponent.score?.5:own.score>opponent.score?1:0;const mov=1+.35*Math.tanh(Math.abs(own.score-opponent.score)/25);const playingTeams=Math.max(1,own.teams.filter((entry:any)=>!entry.sitting).length);const delta=20*(actual-expected)*mov*eventWeight(event)/playingTeams;
-      rating+=delta;change+=delta;matchCount++;
-    }
-    if(matchCount){ratingBySeason.set(seasonId,rating);ratingHistory.push({seasonId,eventId:event.id,event:event.name,eventDate:event.start,change:Math.round(change),rating:Math.round(rating),matches:matchCount})}
+    if(eventMatches.length)processCompletedEvent({event,matches:eventMatches,states:ratingStates,historyByTeam:ratingHistoryByTeam});
   }
+  const ratingHistory=ratingHistoryByTeam.get(team.id)??[];
   const response=Response.json({
     team:{id:team.id,number:team.number,name:team.team_name||team.organization||team.number,organization:team.organization||'',robot:team.robot_name||'',grade:team.grade||'Unknown',region:[team.location?.city,team.location?.region,team.location?.country].filter(Boolean).join(', ')||'Unassigned',country:team.location?.country||'Unassigned',registered:Boolean(team.registered),active:currentEvents.length>0,currentSeasonEvents:currentEvents.length,seasons:seasonIds.size},
     events:sortedEvents.map((event:any)=>({id:event.id,sku:event.sku,name:event.name,start:event.start,end:event.end,season:event.season?.name||'Unknown season',seasonId:event.season?.id,level:event.level,location:[event.location?.city,event.location?.region,event.location?.country].filter(Boolean).join(', '),elimination:eliminationByEvent.get(event.id)||'No elimination result'})),
@@ -82,9 +75,10 @@ export async function GET(request: Request, context: { params: Promise<{number:s
     awards:awards.map((award:any)=>{const event=eventMap.get(award.event?.id) as any;return{title:award.title||award.name,event:award.event?.name||'Official event',eventId:award.event?.id,season:event?.season?.name||'',seasonId:event?.season?.id}}),
     skills:skills.sort((a:any,b:any)=>Number(b.score)-Number(a.score)).map((skill:any)=>({event:skill.event?.name||'Official event',eventId:skill.event?.id,type:skill.type,score:skill.score,attempts:skill.attempts,rank:skill.rank,season:skill.season?.name||'',seasonId:skill.season?.id??(eventMap.get(skill.event?.id) as any)?.season?.id})),
     seasonGrades,
-    ratingHistory,
+    ratingHistory,modelVersion:VCR_VERSION,
     loadedSeasonIds:requestedSeason?[Number(requestedSeason)]:[...seasonIds].map(Number),
   },{headers:{'Cache-Control':'public, max-age=900, s-maxage=1800, stale-while-revalidate=7200'}});
   await writeCache(request,response);return response;
   } catch { return Response.json({error:'Team history could not be fully loaded. Please retry.'},{status:502,headers:{'Cache-Control':'no-store'}}); }
 }
+
