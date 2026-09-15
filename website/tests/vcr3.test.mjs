@@ -1,4 +1,6 @@
 import test from'node:test';import assert from'node:assert/strict';import{EVENT_WEIGHTS,settleEvent,matchEvidence,processCompletedEvent,VCR_VERSION}from'../lib/vcr3.mjs';
+test('single active robot can receive all alliance credit',()=>{const evidence=matchEvidence({actual:1,expected:0,margin:100,scoreScale:10,share:1});assert.ok(evidence.residual>2);assert.ok(Number.isFinite(settleEvent(base({matches:[evidence]})).delta))});
+test('complementary shares tolerate ordinary floating-point rounding',()=>{assert.doesNotThrow(()=>matchEvidence({actual:0,expected:.9,margin:-50,scoreScale:10,share:1-.8}));assert.throws(()=>matchEvidence({actual:1,expected:.5,margin:1,scoreScale:10,share:1.01}))});
 const base=(o={})=>({rating:1400,tier:'Gold S',completed:true,matches:Array.from({length:8},()=>matchEvidence({actual:0,expected:.8,margin:-40,scoreScale:25})),qualificationActual:.1,qualificationExpected:.7,eliminationActual:1,eliminationExpected:.4,titleProbability:.1,champion:true,contributionResidual:-5,autoResidual:-5,...o});
 test('unexpected champions gain at every tier',()=>{for(const tier of Object.keys(EVENT_WEIGHTS))assert.ok(settleEvent(base({tier})).delta>0)});
 test('legitimate non-champion loss remains negative',()=>assert.ok(settleEvent(base({champion:false,eliminationActual:0})).delta<0));
