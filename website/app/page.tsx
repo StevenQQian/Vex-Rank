@@ -12,6 +12,7 @@ import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YA
 type View = 'home' | 'events' | 'event' | 'rankings' | 'stats' | 'teams' | 'team';
 
 const eventDetailCache=new Map<string,any>();
+const eventCalendarCache=new Map<string,any>();
 const teamHistoryCache=new Map<string,any>();
 const requestCache=new Map<string,Promise<any>>();
 const cacheTimes=new Map<string,number>();
@@ -92,6 +93,7 @@ export default function Home() {
   const [grade, setGrade] = useState('All');
   const [eventExtras, setEventExtras] = useState({ season: '2026–27: Override', level: 'All', from: '', to: '', eventRegion: 'All', city: '', affiliation: '', registrationOpen: false, spotsOpen: false, worldQualifier: false, girlPowered: false, includeCanceled: false });
   const [liveEvents, setLiveEvents] = useState<any[]>([]);
+  const [homeEvents, setHomeEvents] = useState<any[]>([]);
   const [eventsError,setEventsError]=useState('');
   const [eventsLoading,setEventsLoading]=useState(true);
   const [eventsRetry,setEventsRetry]=useState(0);
@@ -127,11 +129,24 @@ export default function Home() {
     let active = true;
     const seasonId=({'2026–27: Override':'204','2025–26: Push Back':'197','2024–25: High Stakes':'190','2023–24: Over Under':'181'} as Record<string,string>)[eventExtras.season]??'204';
     setEventsLoading(true);setEventsError('');setLiveEvents([]);setEventsLive(false);
-    siteFetch(`/api/events?season=${seasonId}&classification=v49`).then(response => response.ok ? response.json() : Promise.reject()).then((payload:any) => {
+    cachedJson(`/api/events?season=${seasonId}&classification=v49`,eventCalendarCache,seasonId).then((payload:any) => {
       if (active && Array.isArray(payload.events)) { setLiveEvents(payload.events); setEventsLive(true); }
     }).catch(() => {if(active)setEventsError('Events could not be loaded. Please retry.');}).finally(()=>{if(active)setEventsLoading(false)});
     return () => { active = false; };
   }, [eventExtras.season,eventsRetry]);
+
+  // Homepage data never follows the calendar's saved season or search filters.
+  useEffect(() => {
+    if(view!=='home')return;
+    let active=true;
+    const refresh=()=>cachedJson('/api/events?season=204&classification=v49',eventCalendarCache,'204')
+      .then((payload:any)=>{if(active&&Array.isArray(payload.events))setHomeEvents([...payload.events]);})
+      .catch(()=>undefined);
+    void refresh();
+    const timer=window.setInterval(refresh,300000);
+    window.addEventListener('focus',refresh);
+    return()=>{active=false;window.clearInterval(timer);window.removeEventListener('focus',refresh);};
+  },[view,eventsRetry]);
 
   useEffect(()=>{
     if(!['home','rankings','stats','teams'].includes(view)||rankingsMeta)return;
@@ -178,7 +193,7 @@ export default function Home() {
       {mobile && <nav className="border-t border-white/10 bg-[#0d1015] p-4 md:hidden">{(['events','rankings','stats','teams'] as View[]).map(v => <button key={v} onClick={() => go(v)} className="block w-full border-b border-white/10 px-2 py-3 text-left font-bold capitalize">{v === 'stats' ? 'Stat leaders' : v}</button>)}</nav>}
     </header>
 
-    {view === 'home' && <HomeView go={go} openTeam={openTeam} openEvent={openEvent} eventRows={eventRows} teamRows={teamRows} />}
+    {view === 'home' && <HomeView go={go} openTeam={openTeam} openEvent={openEvent} eventRows={homeEvents} teamRows={teamRows} />}
     {view === 'events' && <EventsView loading={eventsLoading} error={eventsError} retry={()=>setEventsRetry(value=>value+1)} results={shownEvents} live={eventsLive} openEvent={openEvent} search={eventSearch} setSearch={setEventSearch} filters={{region,eventClass,format,time,grade}} setters={{setRegion,setEventClass,setFormat,setTime,setGrade}} extras={eventExtras} setExtras={setEventExtras} />}
     {view === 'event' && <EventInfoView key={selectedEvent.id} event={selectedEvent} goBack={() => go('events')} openTeam={openTeam} />}
     {(view==='rankings'||view==='stats'||view==='home')&&rankingsError&&<LoadError message={rankingsError} retry={()=>setRankingsRetry(value=>value+1)} />}
@@ -506,3 +521,4 @@ function finalistDivisions(division:any,divisions:any[]) {
     return divisions.find((other:any)=>other.id!==division.id&&(other.matches??[]).some((match:any)=>(match.alliances??[]).some((entry:any)=>(entry.teams??[]).some((team:any)=>ids.has(team.team?.id)))))?.name??'';
   });
 }
+
