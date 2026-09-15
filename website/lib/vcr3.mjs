@@ -11,11 +11,11 @@ export function eventTier(event){
   return'B';
 }
 export function matchEvidence({actual,expected,margin,scoreScale,share=.5,reliability=1}){
-  if(![0,.5,1].includes(actual))throw new RangeError('Invalid actual');finite(expected,'expected',0,1);finite(margin,'margin');finite(scoreScale,'scoreScale',Number.MIN_VALUE);finite(share,'share',.2,.8);finite(reliability,'reliability',0,1);
+  if(![0,.5,1].includes(actual))throw new RangeError('Invalid actual');finite(expected,'expected',0,1);finite(margin,'margin');finite(scoreScale,'scoreScale',Number.MIN_VALUE);finite(share,'share',0,1);finite(reliability,'reliability',0,1);
   const mov=actual===.5?1:1+.25*Math.tanh(Math.abs(margin)/scoreScale);
   return{residual:(actual-expected)*mov*2*share,reliability};
 }
-const matchComponent=rows=>{let total=0,mass=0;for(const row of rows){finite(row.residual,'residual',-2,2);finite(row.reliability,'match reliability',0,1);total+=row.residual*row.reliability;mass+=row.reliability}return 40*(mass?total/mass:0)*Math.min(1,mass/6)};
+const matchComponent=rows=>{let total=0,mass=0;for(const row of rows){finite(row.residual,'residual',-2.5,2.5);finite(row.reliability,'match reliability',0,1);total+=row.residual*row.reliability;mass+=row.reliability}return 40*(mass?total/mass:0)*Math.min(1,mass/6)};
 export function settleEvent(input){
   const{rating,tier,matches,qualificationActual,qualificationExpected,eliminationActual,eliminationExpected,champion=false,titleProbability,completed,reliability=1,contributionResidual=null,autoResidual=null}=input;
   finite(rating,'rating');finite(reliability,'reliability',0,1);if(!Object.hasOwn(EVENT_WEIGHTS,tier))throw new RangeError('Unknown tier');if(completed!==true)throw new Error('Only a verified completed event may settle');
