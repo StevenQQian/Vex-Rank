@@ -1,5 +1,6 @@
 'use client';
 import { RANKING_SEASONS, validateArchive } from '@/lib/ranking-seasons.mjs';
+import TeamDirectory from '@/components/team-directory';
 import { siteFetch } from '@/lib/client-fetch';
 import { bracketRound } from '@/lib/bracket';
 
@@ -111,6 +112,7 @@ export default function Home() {
   const [rankingsRetry,setRankingsRetry]=useState(0);
   const [teamSearch, setTeamSearch] = useState('');
   const [teamRegion, setTeamRegion] = useState('All');
+  const [teamDirectoryRegion,setTeamDirectoryRegion]=useState('All');
   const [rankingRange, setRankingRange] = useState('All');
   const [rankingViewState,setRankingViewState]=useState({season:'2026–27 Override',country:'All',region:'All',grade:'All teams',search:'',visibleCount:100});
   const [selectedTeam, setSelectedTeam] = useState<any>({number:'',name:''});
@@ -121,16 +123,16 @@ export default function Home() {
   useEffect(()=>{
     try {
       const saved=JSON.parse(sessionStorage.getItem('vexrank-navigation')??'null');
-      if(saved){if(saved.view)setView(saved.view);if(saved.selectedTeam)setSelectedTeam(saved.selectedTeam);if(saved.selectedEvent)setSelectedEvent(saved.selectedEvent);if(saved.eventSearch!=null)setEventSearch(saved.eventSearch);if(saved.teamSearch!=null)setTeamSearch(saved.teamSearch);if(saved.region)setRegion(saved.region);if(saved.eventClass)setEventClass(saved.eventClass);if(saved.format)setFormat(saved.format);if(saved.time)setTime(saved.time);if(saved.grade)setGrade(saved.grade);if(saved.eventExtras)setEventExtras(saved.eventExtras);if(saved.teamRegion)setTeamRegion(saved.teamRegion);if(saved.rankingRange)setRankingRange(saved.rankingRange);if(saved.rankingViewState)setRankingViewState(saved.rankingViewState);if(saved.teamReturnView)setTeamReturnView(saved.teamReturnView);requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,saved.scrollY??0)))}
+      if(saved){if(saved.view)setView(saved.view);if(saved.selectedTeam)setSelectedTeam(saved.selectedTeam);if(saved.selectedEvent)setSelectedEvent(saved.selectedEvent);if(saved.eventSearch!=null)setEventSearch(saved.eventSearch);if(saved.teamSearch!=null)setTeamSearch(saved.teamSearch);if(saved.region)setRegion(saved.region);if(saved.eventClass)setEventClass(saved.eventClass);if(saved.format)setFormat(saved.format);if(saved.time)setTime(saved.time);if(saved.grade)setGrade(saved.grade);if(saved.eventExtras)setEventExtras(saved.eventExtras);if(saved.teamRegion)setTeamRegion(saved.teamRegion);if(saved.teamDirectoryRegion)setTeamDirectoryRegion(saved.teamDirectoryRegion);if(saved.rankingRange)setRankingRange(saved.rankingRange);if(saved.rankingViewState)setRankingViewState(saved.rankingViewState);if(saved.teamReturnView)setTeamReturnView(saved.teamReturnView);requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,saved.scrollY??0)))}
     } catch {}
     setNavigationRestored(true);
   },[]);
 
   useEffect(()=>{
     if(!navigationRestored)return;
-    const save=()=>{try{sessionStorage.setItem('vexrank-navigation',JSON.stringify({view,selectedTeam,selectedEvent,eventSearch,teamSearch,region,eventClass,format,time,grade,eventExtras,teamRegion,rankingRange,rankingViewState,teamReturnView,scrollY:window.scrollY}));}catch{}};
+    const save=()=>{try{sessionStorage.setItem('vexrank-navigation',JSON.stringify({view,selectedTeam,selectedEvent,eventSearch,teamSearch,region,eventClass,format,time,grade,eventExtras,teamRegion,teamDirectoryRegion,rankingRange,rankingViewState,teamReturnView,scrollY:window.scrollY}));}catch{}};
     save();window.addEventListener('pagehide',save);return()=>window.removeEventListener('pagehide',save);
-  },[navigationRestored,view,selectedTeam,selectedEvent,eventSearch,teamSearch,region,eventClass,format,time,grade,eventExtras,teamRegion,rankingRange,rankingViewState,teamReturnView]);
+  },[navigationRestored,view,selectedTeam,selectedEvent,eventSearch,teamSearch,region,eventClass,format,time,grade,eventExtras,teamRegion,teamDirectoryRegion,rankingRange,rankingViewState,teamReturnView]);
 
   useEffect(() => {
     let active = true;
@@ -169,7 +171,7 @@ export default function Home() {
   const go = (next: View) => { setView(next); setMobile(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const openTeam = (team: any) => { prefetchTeam(team.number,team.seasonId,team.id);setSelectedTeam(team); setTeamReturnView(view); go('team'); };
   const openEvent = (event:any) => { prefetchEvent(event.id);setSelectedEvent(event); go('event'); };
-  const submitGlobal = () => { const q = globalSearch.trim().toLowerCase(); const match = teamRows.find(t => t.number.toLowerCase() === q || t.name.toLowerCase().includes(q)); if (match) openTeam(match); else if (q) { setTeamSearch(globalSearch); go('teams'); } };
+  const submitGlobal = () => { const q=globalSearch.trim(); if(q){setTeamSearch(q);setTeamRegion('All');setTeamDirectoryRegion('All');setRankingRange('All');go('teams');} };
 
   const shownEvents = useMemo(() => eventRows.filter((e:any) => {
     if (!eventExtras.includeCanceled && /cancell?ed/i.test(e.status ?? e.name)) return false;
@@ -182,7 +184,6 @@ export default function Home() {
     const today=new Date().toISOString().slice(0,10);const next30=new Date(Date.now()+30*86400000).toISOString().slice(0,10);const normalize=(value:string)=>value.toLowerCase().replace(/[^a-z0-9]/g,'');const seasonLabel=String(e.season??'').includes('2026-2027')||!e.season?'2026–27: Override':String(e.season??'').includes('2025-2026')?'2025–26: Push Back':String(e.season??'').includes('2024-2025')?'2024–25: High Stakes':String(e.season??'').includes('2023-2024')?'2023–24: Over Under':e.season;
     return (!eventSearch || `${e.name} ${e.city}`.toLowerCase().includes(eventSearch.toLowerCase())) && (region === 'All' || normalize(e.region) === normalize(region)) && (eventExtras.season==='All'||seasonLabel===eventExtras.season) && (eventClass === 'All' || eventType === eventClass) && (format === 'All' || eventFormats.includes(format)) && (grade === 'All' || e.grade === grade || e.grade === 'Mixed') && (time === 'All events' || (time === 'Upcoming only'&&e.date>=today) || (time === 'Next 30 days' && e.date>=today&&e.date<=next30)) && (eventExtras.level === 'All' || level === eventExtras.level) && (!eventExtras.from || e.date >= eventExtras.from) && (!eventExtras.to || e.date <= eventExtras.to) && (eventExtras.eventRegion === 'All' || normalize(eventRegion)===normalize(eventExtras.eventRegion)) && (!eventExtras.city || e.city.toLowerCase().includes(eventExtras.city.toLowerCase())) && (!eventExtras.affiliation || e.name.toLowerCase().includes(eventExtras.affiliation.toLowerCase())) && (!eventExtras.registrationOpen || e.status === 'Registration open') && (!eventExtras.spotsOpen || e.status === 'Registration open') && (!eventExtras.worldQualifier || worldQualifier) && (!eventExtras.girlPowered || girlPowered);
   }), [eventRows, eventSearch, region, eventClass, format, time, grade, eventExtras]);
-  const shownTeams = useMemo(() => teamRows.filter(t => (!teamSearch || `${t.number} ${t.name}`.toLowerCase().includes(teamSearch.toLowerCase())) && (teamRegion === 'All' || t.country === teamRegion) && (rankingRange === 'All' || (rankingRange === 'Top 5' && t.rank <= 5) || (rankingRange === 'Top 10' && t.rank <= 10) || (rankingRange === '11–50' && t.rank >= 11))), [teamRows, teamSearch, teamRegion, rankingRange]);
 
 
   return <main className="min-h-screen bg-[#090b0f] text-[#f4f5f7]">
@@ -206,7 +207,7 @@ export default function Home() {
     {(view==='rankings'||view==='stats'||view==='home')&&rankingsError&&<LoadError message={rankingsError} retry={()=>setRankingsRetry(value=>value+1)} />}
     {view === 'rankings' && <RankingsView teams={teamRows} meta={rankingsMeta} openTeam={openTeam} savedState={rankingViewState} setSavedState={setRankingViewState} />}
     {view === 'stats' && <StatRankingsView teams={teamRows} openTeam={openTeam} />}
-    {view === 'teams' && <TeamsView results={shownTeams} search={teamSearch} setSearch={setTeamSearch} region={teamRegion} setRegion={setTeamRegion} range={rankingRange} setRange={setRankingRange} openTeam={openTeam} />}
+    {view === 'teams' && <TeamDirectory search={teamSearch} setSearch={setTeamSearch} country={teamRegion} setCountry={setTeamRegion} region={teamDirectoryRegion} setRegion={setTeamDirectoryRegion} grade={rankingRange} setGrade={setRankingRange} openTeam={openTeam} />}
     {view === 'team' && <TeamView key={`${selectedTeam.number}:${selectedTeam.seasonId??selectedTeam.season??''}`} team={selectedTeam} goBack={() => go(teamReturnView)} backLabel={teamReturnView==='rankings'?'rankings':teamReturnView==='stats'?'stat leaders':teamReturnView==='events'||teamReturnView==='event'?'event':'teams'} openEvent={openEvent} />}
 
     <footer className="mt-16 border-t border-white/10 bg-[#0d1015]"><div className="mx-auto flex max-w-[1440px] flex-col gap-5 px-5 py-8 text-xs text-white/35 sm:flex-row sm:items-center lg:px-8"><AppLogo /><p>Independent V5RC analytics using official Event.VEX results.</p><p className="sm:ml-auto">VCR model · 2026–27 season</p></div></footer>
@@ -414,18 +415,6 @@ function StatRankingsView({ teams: rows, openTeam }: { teams: any[]; openTeam:(t
     {visibleCount<ranking.length&&<button onClick={()=>setVisibleCount(count=>count+250)} className="mt-4 w-full border border-white/10 bg-[#101319] py-3 text-xs font-black uppercase tracking-wider text-white/50 hover:border-white/30 hover:text-white">Show more teams · {ranking.length-visibleCount} remaining</button>}
     {!visible.length&&<div className="mt-4"><Empty text="No teams currently meet this category’s qualification threshold." /></div>}
     <p className="mt-4 text-xs text-white/30">Skills scores come directly from the official Event.VEX world skills standings. Strategic reliability and rating stability require 36 scored matches across at least four events, preventing small samples from leading those categories.</p>
-  </section>;
-}
-
-function TeamsView({ results, search, setSearch, region, setRegion, range, setRange, openTeam }: any) {
-  const [archive,setArchive]=useState<any>(null);const [archiveLoading,setArchiveLoading]=useState(false);const [archiveError,setArchiveError]=useState('');
-  useEffect(()=>{const number=search.trim().toUpperCase();if(!/^[0-9]+[A-Z0-9-]+$/.test(number)){setArchive(null);setArchiveError('');return}const timer=setTimeout(()=>{setArchiveLoading(true);setArchiveError('');cachedJson(`/api/teams/${encodeURIComponent(number)}?profile=v7`,teamHistoryCache,number).then(setArchive).catch(error=>{setArchive(null);setArchiveError(error.message)}).finally(()=>setArchiveLoading(false))},200);return()=>clearTimeout(timer)},[search]);
-  return <section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8"><PageHead eyebrow="Team directory" title="Find any V5RC team" copy="Search by team number or name, then open a complete competitive profile." />
-    <div className="mt-8 grid gap-3 border border-white/10 bg-[#101319] p-4 md:grid-cols-[2fr_1fr_1fr]"><label className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-white/35" /><input autoFocus value={search} onChange={e => setSearch(e.target.value)} placeholder="Try 8829C or 55288A" className="h-10 w-full border border-white/10 bg-black/20 pl-9 pr-3 text-sm outline-none focus:border-white/30" /></label><NativeSelect value={region} onChange={e => setRegion(e.target.value)} className="w-full [&_select]:h-10 [&_select]:rounded-none [&_select]:border-white/10 [&_select]:bg-black/20"><NativeSelectOption>All</NativeSelectOption>{['USA','Canada','Singapore','Australia','Hong Kong'].map(x => <NativeSelectOption key={x}>{x}</NativeSelectOption>)}</NativeSelect><NativeSelect value={range} onChange={e => setRange(e.target.value)} className="w-full [&_select]:h-10 [&_select]:rounded-none [&_select]:border-white/10 [&_select]:bg-black/20"><NativeSelectOption>All</NativeSelectOption><NativeSelectOption>Top 5</NativeSelectOption><NativeSelectOption>Top 10</NativeSelectOption><NativeSelectOption>11–50</NativeSelectOption></NativeSelect></div>
-    {archiveLoading&&<p className="mt-4 text-sm text-white/40">Searching the complete Event.VEX team archive…</p>}
-    {archive&&<button onClick={()=>openTeam({...archive.team,history:archive})} className="mt-4 flex w-full items-center gap-4 border border-[#ed2b3a]/40 bg-[#ed2b3a]/[.07] p-5 text-left hover:border-[#ed2b3a]"><span className="grid h-12 w-12 place-items-center bg-[#ed2b3a] font-black">{archive.team.number.slice(-1)}</span><span><b className="block text-lg">{archive.team.number} · {archive.team.name}</b><small className="text-white/45">{archive.team.active?'Active this season':'Inactive this season'} · {archive.team.seasons} seasons · {archive.events.length} events · {archive.awards.length} awards</small></span><ArrowRight className="ml-auto" /></button>}
-    {archiveError&&<p className="mt-4 text-sm text-rose-300">{archiveError}</p>}
-    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{results.map((t:any) => <button key={t.number} onClick={() => openTeam(t)} className="group border border-white/10 bg-[#101319] p-5 text-left hover:-translate-y-0.5 hover:border-white/25"><div className="flex items-start justify-between"><span className="grid h-12 w-12 place-items-center bg-white/[.04] font-black text-white/35">#{t.rank}</span><span className="font-mono text-lg font-black">{t.rating}</span></div><h2 className="mt-5 text-xl font-black group-hover:text-[#ed2b3a]">{t.number}</h2><p className="text-sm text-white/65">{t.name}</p><p className="mt-3 text-xs text-white/35">{t.region}</p><div className="mt-5 grid grid-cols-3 border-t border-white/10 pt-4 text-xs"><span><small className="block text-white/30">Record</small><b className="mt-1 block font-mono">{t.record}</b></span><span><small className="block text-white/30">Events</small><b className="mt-1 block">{t.events}</b></span><span><small className="block text-white/30">Movement</small><b className="mt-1 block"><Trend value={t.change} /></b></span></div></button>)}{!results.length&&!archive&&!archiveLoading && <div className="md:col-span-2 xl:col-span-3"><Empty text="No current-season ranking matches. Enter the complete team number to search the historical archive." /></div>}</div>
   </section>;
 }
 
