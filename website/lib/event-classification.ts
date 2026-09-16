@@ -1,3 +1,6 @@
+// Calendar/filter labels, not rating weights. Upstream level=World means a
+// Worlds qualifier, so identify the championship by its name. Signature requires
+// the official level to avoid promoting practice events that mention a signature.
 export function classifyEvent(name:string, level:string | null) {
   const value = name.toLowerCase();
   const officialLevel = String(level ?? '').trim().toLowerCase();

@@ -1,5 +1,8 @@
 // Historical upstream records often say scored:false despite recorded scores.
 // Use actual score evidence, and exclude ambiguous 0–0 placeholders.
+// Rounds 2-6 are competitive rounds; omit practice records. De-duplicate accepted
+// IDs across divisions. Mark an ID seen only after validation so an invalid copy
+// cannot hide a later valid copy. An explicitly scored 0-0 tie remains valid.
 export function historicalMatches(divisions) {
   const seen=new Set();
   return divisions.flatMap(d=>d.matches??[]).filter(m=>{
