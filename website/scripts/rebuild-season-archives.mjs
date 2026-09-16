@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile, rename } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { createHash } from 'node:crypto';
 import { processCompletedEvent, VCR_VERSION } from '../lib/vcr3.mjs';
 import { historicalMatches } from '../lib/archive-matches.mjs';
 
@@ -10,11 +11,16 @@ const selected = process.argv.slice(2).map(Number);
 if (!selected.length || selected.some(id=>!seasons[id])) throw new Error('Specify season IDs: 197 190 181 173');
 const overrides = JSON.parse(await readFile(resolve('lib/season-grade-overrides.json'),'utf8'));
 const sleep = ms=>new Promise(r=>setTimeout(r,ms));
+const pageCache=resolve('.ranking-cache/archive-pages');await mkdir(pageCache,{recursive:true});
+let nextRequest=0;
 async function get(path) {
+  const cachedFile=resolve(pageCache,createHash('sha256').update(path).digest('hex')+'.json');
+  try{return JSON.parse(await readFile(cachedFile,'utf8'))}catch{}
   for(let attempt=0;attempt<5;attempt++) {
     try {
+      const wait=Math.max(0,nextRequest-Date.now());nextRequest=Math.max(nextRequest,Date.now())+1800;if(wait)await sleep(wait);
       const r=await fetch(api+path,{signal:AbortSignal.timeout(90000)});
-      if(r.ok)return await r.json();
+      if(r.ok){const data=await r.json();await writeFile(cachedFile,JSON.stringify(data));return data}
       if(r.status===429)throw Object.assign(new Error('Official API rate limit reached; cached progress preserved. Retry later.'),{rateLimited:true});
       if(r.status<500&&r.status!==429)throw new Error(`HTTP ${r.status}: ${path}`);
     } catch(error) { if(error.rateLimited||attempt===4)throw error; }
@@ -23,10 +29,16 @@ async function get(path) {
   throw new Error(`Could not retrieve ${path}`);
 }
 async function paged(path){const first=await get(path);if(!Array.isArray(first.data))throw new Error('Invalid source page');const data=[...first.data];for(let page=2;page<=Number(first.meta?.last_page??1);page++){const next=await get(`${path}&page=${page}`);if(!Array.isArray(next.data))throw new Error('Invalid source page');data.push(...next.data)}return data}
-async function eventPayload(id){
-  const {event}=await get(`/api/archive-source/${id}?mode=metadata`);
+async function divisionMatches(event,d){
+  const url=`https://events.vex.com/api/v2/events/${event.id}/divisions/${d.id}/matches?per_page=250`;
+  const readLegacy=async path=>JSON.parse(await readFile(resolve(`.ranking-cache/${event.season.id}/${createHash('sha1').update(path).digest('hex')}.json`),'utf8'));
+  try{const first=await readLegacy(url),data=[...first.data];for(let page=2;page<=Number(first.meta?.last_page??1);page++)data.push(...(await readLegacy(`${url}&page=${page}`)).data);return data}catch{}
+  return paged(`/api/archive-source/${event.id}?mode=matches&division=${d.id}`);
+}
+async function eventPayload(event){
+  const id=event.id;
   const teams=await paged(`/api/archive-source/${id}?mode=teams`),divisions=[];
-  for(const d of event.divisions??[])divisions.push({...d,matches:await paged(`/api/archive-source/${id}?mode=matches&division=${d.id}`)});
+  for(const d of event.divisions??[])divisions.push({...d,matches:await divisionMatches(event,d)});
   return{event,divisions,teams:teams.map(t=>({id:t.id,number:t.number,name:t.team_name,organization:t.organization,grade:t.grade,location:t.location}))};
 }
 for(const season of selected) {
@@ -40,7 +52,7 @@ for(const season of selected) {
   await Promise.all(Array.from({length:2},async()=>{while(cursor<events.length){
     const e=events[cursor++],file=resolve(cache,`${e.id}.json`);
     try {
-      let p;try{p=JSON.parse(await readFile(file,'utf8'))}catch{p=await eventPayload(e.id)}
+      let p;try{p=JSON.parse(await readFile(file,'utf8'))}catch{p=await eventPayload(e)}
       if(Number(p.event?.season?.id)!==season||!Array.isArray(p.divisions)||!Array.isArray(p.teams))throw new Error('Invalid event payload');
       await writeFile(file,JSON.stringify(p));payloads.set(Number(e.id),p);
     } catch(error){failures.push({event:e.id,error:String(error)});console.error(`Event ${e.id}: ${error}`);if(error.rateLimited)cursor=events.length}
