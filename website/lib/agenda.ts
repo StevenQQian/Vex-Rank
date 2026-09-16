@@ -1,3 +1,8 @@
+/**
+ * Parse organizer text (including pipe-separated HTML-table cells) for the agenda UI.
+ * fallbackDays supplies headings when the organizer omits them; it does not invent
+ * activities. Preserve unrecognized text as notes or untimed entries.
+ */
 export function parseAgenda(text:string, fallbackDays:Date[]) {
   const weekdayPattern=/^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b/i;
   const dayPattern=/^day\s*\d+\b/i;
@@ -19,6 +24,9 @@ export function parseAgenda(text:string, fallbackDays:Date[]) {
   return {days:cleanDays,notes:Array.from(new Set(notes.filter(note=>note.length>2)))};
 }
 
+// Recognize the four-column organizer table before free-form time parsing.
+// The column path assumes Start time, End time, Activity, Location order; keep
+// fixtures for both table and plain-text schedules when changing this parser.
 function agendaEntries(raw:string[],timePattern:RegExp) {
   const cells=raw.flatMap(line=>line.split('|')).map(line=>line.trim()).filter(Boolean);const headers=['start time','end time','activity','location'];const hasColumns=headers.every(header=>cells.some(line=>line.toLowerCase()===header));
   if(hasColumns){const values=cells.filter(line=>!headers.includes(line.toLowerCase()));const entries=[];for(let index=0;index<values.length;index+=4){const [start,end,activity,location]=values.slice(index,index+4);if(!activity){entries.push({time:'',activity:values.slice(index).join(' · '),location:''});continue;}entries.push({time:[cleanAgendaTime(start),cleanAgendaTime(end)].filter(Boolean).join('–'),activity,location:location||''})}return entries}

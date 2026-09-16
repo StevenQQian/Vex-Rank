@@ -19,6 +19,9 @@ async function fetchWithRetry(url:string,headers:Record<string,string>,attempt=0
 async function readCache(request:Request){try{return await (globalThis as any).caches?.default?.match(request)}catch{return undefined}}
 async function writeCache(request:Request,response:Response){try{await (globalThis as any).caches?.default?.put(request,response.clone())}catch{}}
 
+// Live/sample ranking path: only the latest 36 completed events are replayed.
+// The Cloudflare entry point intercepts historical seasons and serves archives.
+// A direct call to this route is therefore not a full historical-season rebuild.
 export async function GET(request:Request){
   const token=process.env.ROBOT_EVENTS_API_TOKEN;
   if(!token)return Response.json({error:'RobotEvents API is not configured.'},{status:503});
@@ -39,10 +42,14 @@ export async function GET(request:Request){
   const states=new Map<number,TeamState>();
   const historyByTeam=new Map<number,any[]>(),matchesByEvent=new Map<number,any[]>();for(const match of matches){if(!matchesByEvent.has(match.eventId))matchesByEvent.set(match.eventId,[]);matchesByEvent.get(match.eventId)!.push(match)}
   for(const event of completed){const eventMatches=matchesByEvent.get(event.id)??[];processCompletedEvent({event,matches:eventMatches,states,historyByTeam});for(const match of eventMatches)for(const alliance of match.alliances??[])for(const entry of alliance.teams??[]){const team=states.get(entry.team?.id);if(!team)continue;if(match.gradeHint==='Middle School')team.middleGradeEvents.add(event.id);if(match.gradeHint==='High School')team.highGradeEvents.add(event.id)}}
+  // Replay uses full internal ratings; the leaderboard separately decays event
+  // changes and sorts by rating minus uncertainty. Do not round before sorting.
   const rated=[...states.values()].filter(team=>team.matches>=4).map(team=>{const confidence=Math.max(35,Math.round(120/Math.sqrt(Math.max(1,team.matches/4))));const history=historyByTeam.get(team.id)??[];const decayedRating=1500+history.reduce((sum,row)=>sum+Number(row.rawChange??row.change)*recencyWeight(row.eventDate,cutoff),0);return{...team,rating:decayedRating,events:team.events.size,confidence,displayedStrength:decayedRating-confidence,form:history.slice(-5).map(row=>({event:row.event,change:row.change,tier:row.tier,champion:row.champion}))}}).sort((a,b)=>b.displayedStrength-a.displayedStrength);
   const groups=Array.from({length:Math.ceil(rated.length/100)},(_,index)=>rated.slice(index*100,index*100+100));
   const detailPayloads=await mapLimit(groups,3,async group=>{const ids=group.map(team=>`id%5B%5D=${team.id}`).join('&');return vexCollection(`${API_ROOT}/teams?${ids}`,headers)});
   const official=new Map(detailPayloads.flat().map(team=>[team.id,team]));
+  // The fields called opr/dpr here are half-alliance scoring averages, not fitted
+  // OPR/DPR estimates. Zero auto/ase/skills values are placeholders in this response.
   const rankings=rated.map((team,index)=>{const info=official.get(team.id) as any;const games=Math.max(1,team.matches);const opr=team.pointsFor/games/2;const dpr=team.pointsAgainst/games/2;const eventGrade=team.middleGradeEvents.size===team.highGradeEvents.size?null:team.middleGradeEvents.size>team.highGradeEvents.size?'Middle School':'High School';const number=info?.number??team.number;const verifiedGrade=(seasonGradeOverrides as Record<string,Record<string,string>>)[seasonId]?.[number];const grade=verifiedGrade??eventGrade??gradeFromOrganization(info?.organization)??info?.grade??'Unknown';return{rank:index+1,id:team.id,number,name:info?.team_name??info?.organization??team.number,region:[info?.location?.region,info?.location?.country].filter(Boolean).join(', ')||'Unassigned',eventRegion:info?.location?.region||info?.location?.country||'Unassigned',country:info?.location?.country||'Unassigned',rating:Math.round(team.rating),confidence:team.confidence,change:team.form.at(-1)?.change??0,record:`${team.wins}–${team.losses}–${team.ties}`,events:team.events,opr:Number(opr.toFixed(1)),dpr:Number(dpr.toFixed(1)),ccwm:Number((opr-dpr).toFixed(1)),auto:0,ase:0,consistency:Math.max(0,Math.min(100,Math.round(100-team.confidence/2))),skills:0,form:team.form,seasonId:Number(seasonId),season:season.label,matches:team.matches,grade,organization:info?.organization??'',robot:info?.robot_name??''}});
   const response=Response.json({rankings,eventsProcessed:completed.length,matchesProcessed:matches.length,method:`${VCR_VERSION} · event settlement · 75-day evidence half-life`,modelVersion:VCR_VERSION,season:season.label,updatedAt:new Date().toISOString()},{headers:{'Cache-Control':'public, max-age=900, s-maxage=1800, stale-while-revalidate=7200'}});
   await writeCache(request,response);return response;

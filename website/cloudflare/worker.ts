@@ -8,6 +8,9 @@ import { archiveSource } from './archive-source';
 
 interface Env { DB: D1Database; ROBOT_EVENTS_API_TOKEN: string; ARCHIVES: Fetcher }
 
+// Allowlist routes and query fields before constructing a stable shared-cache key.
+// Unknown query fields are dropped. Add new data-affecting parameters here as well
+// as in their route, or distinct requests can incorrectly share cached responses.
 function canonicalUrl(request: Request) {
   const incoming = new URL(request.url);
   if (!/^\/api\/(archive-source(?:\/\d{1,10})?|events(?:\/\d{1,10})?|teams\/[0-9]{1,8}[A-Za-z0-9-]{0,12}|rankings|skills)$/.test(incoming.pathname)) return null;
@@ -21,6 +24,7 @@ function canonicalUrl(request: Request) {
   }
   const mode=incoming.searchParams.get('mode');
   if(mode){if(!['metadata','teams','matches'].includes(mode))return null;url.searchParams.set('mode',mode)}
+  // Model-version namespace prevents a new rating model from reusing old responses.
   if (url.pathname === '/api/rankings' || url.pathname.startsWith('/api/teams/')) url.searchParams.set('model', VCR_VERSION);
   return url;
 }
@@ -50,6 +54,8 @@ export default {
     const archiveSeasons:Record<string,string>={'197':'2025-26','190':'2024-25','181':'2023-24','173':'2022-23'};
     const incoming=new URL(request.url),archiveSeason=incoming.searchParams.get('season');
     if(incoming.pathname==='/api/archive-manifest')return cors(await env.ARCHIVES.fetch(new Request(new URL('/manifest.json',incoming.origin))));
+    // Historical rankings come only from published static archives. A missing asset
+    // is a 503, not a fallback to the live route's partial event sample.
     const archivePath=/^\/rankings-20\d{2}-\d{2}-vcr3\.json$/.test(incoming.pathname)?incoming.pathname:incoming.pathname==='/api/rankings'&&archiveSeason&&archiveSeasons[archiveSeason]?`/rankings-${archiveSeasons[archiveSeason]}-vcr3.json`:null;
     if(archivePath){
       const asset=await env.ARCHIVES.fetch(new Request(new URL(archivePath,incoming.origin)));

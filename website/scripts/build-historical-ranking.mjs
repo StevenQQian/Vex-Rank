@@ -1,3 +1,7 @@
+// Legacy direct-token builder. Run from website/ with a season ID.
+// It reads at most three divisions per event and emits unversioned JSON without
+// full coverage metadata. Use rebuild-season-archives.mjs for publishable VCR 3
+// archives; changing the filename alone does not make this output complete.
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';

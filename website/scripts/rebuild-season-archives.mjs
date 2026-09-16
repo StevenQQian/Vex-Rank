@@ -4,6 +4,8 @@ import { createHash } from 'node:crypto';
 import { processCompletedEvent, VCR_VERSION } from '../lib/vcr3.mjs';
 import { historicalMatches } from '../lib/archive-matches.mjs';
 
+// Run from website/: node scripts/rebuild-season-archives.mjs 197 [190 181 173].
+// Downloads are resumable; publishing the generated assets is a separate step.
 // Uses the existing public competition-data API; its server retains the API credential.
 const api = 'https://vexrank-api-test.vexrank-eason.workers.dev';
 const seasons = {197:['2025–26 Push Back','2026-06-01','2025-26'],190:['2024–25 High Stakes','2025-06-01','2024-25'],181:['2023–24 Over Under','2024-06-01','2023-24'],173:['2022–23 Spin Up','2023-06-01','2022-23']};
@@ -11,7 +13,11 @@ const selected = process.argv.slice(2).map(Number);
 if (!selected.length || selected.some(id=>!seasons[id])) throw new Error('Specify season IDs: 197 190 181 173');
 const overrides = JSON.parse(await readFile(resolve('lib/season-grade-overrides.json'),'utf8'));
 const sleep = ms=>new Promise(r=>setTimeout(r,ms));
+// Cache successful pages as well as complete event payloads, so a failed final
+// page does not force earlier pages to be downloaded again. Caches have no TTL:
+// a rebuild reuses snapshots; upstream corrections require deliberate refresh.
 const pageCache=resolve('.ranking-cache/archive-pages');await mkdir(pageCache,{recursive:true});
+// Shared reservation clock spaces both download workers' requests by 1.8 seconds.
 let nextRequest=0;
 async function get(path) {
   const cachedFile=resolve(pageCache,createHash('sha256').update(path).digest('hex')+'.json');
@@ -29,6 +35,8 @@ async function get(path) {
   throw new Error(`Could not retrieve ${path}`);
 }
 async function paged(path){const first=await get(path);if(!Array.isArray(first.data))throw new Error('Invalid source page');const data=[...first.data];for(let page=2;page<=Number(first.meta?.last_page??1);page++){const next=await get(`${path}&page=${page}`);if(!Array.isArray(next.data))throw new Error('Invalid source page');data.push(...next.data)}return data}
+// Reuse the older direct-API cache only when every division page is present.
+// Otherwise fetch through the public adapter; historicalMatches filters afterward.
 async function divisionMatches(event,d){
   const url=`https://events.vex.com/api/v2/events/${event.id}/divisions/${d.id}/matches?per_page=250`;
   const readLegacy=async path=>JSON.parse(await readFile(resolve(`.ranking-cache/${event.season.id}/${createHash('sha1').update(path).digest('hex')}.json`),'utf8'));
@@ -58,10 +66,14 @@ for(const season of selected) {
     } catch(error){failures.push({event:e.id,error:String(error)});console.error(`Event ${e.id}: ${error}`);if(error.rateLimited)cursor=events.length}
     done++;if(done%20===0||done===events.length)console.log(`${season}: ${done}/${events.length}; failures=${failures.length}`);
   }}));
+  // Coverage means every event in the fetched calendar has a payload. Stop before
+  // replacing the public file if any payload failed; the prior archive stays usable.
   const report={season,expectedEvents:events.length,loadedEvents:payloads.size,failures,modelVersion:VCR_VERSION};
   await writeFile(resolve(cache,'coverage.json'),JSON.stringify(report,null,2));
   if(failures.length||payloads.size!==events.length)throw new Error(`${season}: incomplete data; previous archive preserved. Resume this command to retry cached gaps.`);
   const states=new Map(),historyByTeam=new Map(),profiles=new Map();let matchesProcessed=0,eventsWithMatches=0;
+  // Download order is nondeterministic. Replay by end date, then ID, because each
+  // event's frozen starting ratings depend on all previously settled events.
   for(const p of [...payloads.values()].sort((a,b)=>a.event.end.localeCompare(b.event.end)||a.event.id-b.event.id)){
     const matches=historicalMatches(p.divisions);
     if(!matches.length)continue;
@@ -70,6 +82,8 @@ for(const season of selected) {
   }
   const rankings=[...states.values()].filter(t=>t.matches>=4).map(t=>{
     const info=profiles.get(t.id)??{},history=historyByTeam.get(t.id)??[];
+    // Decay event deltas at a fixed season end (75-day half-life), not today's date.
+    // This affects leaderboard display only; replay state retains undecayed ratings.
     const rating=1500+history.reduce((sum,h)=>sum+h.rawChange*2**(-Math.max(0,(Date.parse(end)-Date.parse(h.eventDate))/86400000)/75),0);
     const confidence=Math.max(25,Math.round(120/Math.sqrt(Math.max(1,t.matches/4))));
     return {id:t.id,number:info.number??t.number,name:info.name??t.number,region:[info.location?.region,info.location?.country].filter(Boolean).join(', ')||'Unassigned',country:info.location?.country??'Unassigned',rating:Math.round(rating),displayedStrength:rating-confidence,confidence,change:history.at(-1)?.change??0,record:`${t.wins}–${t.losses}–${t.ties}`,matches:t.matches,events:t.events.size,opr:t.pointsFor/t.matches/2,dpr:t.pointsAgainst/t.matches/2,ccwm:(t.pointsFor-t.pointsAgainst)/t.matches/2,auto:0,ase:0,skills:0,form:history.slice(-5),grade:overrides[season]?.[info.number??t.number]??info.grade??'Unknown',organization:info.organization??'',seasonId:season,season:label};

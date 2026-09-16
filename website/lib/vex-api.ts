@@ -1,7 +1,10 @@
+// Process-local cache of successful upstream pages, keyed by full URL.
+// This is shared public competition data; do not reuse for user-specific responses.
 const pages = new Map<string, { expires:number; data:any }>();
 /** Read complete official collections. A failed page must never masquerade as no results. */
 export async function mapLimit<T, R>(items: T[], limit: number, mapper: (item: T) => Promise<R>): Promise<R[]> {
   const results = new Array<R>(items.length);
+  // Claim each index before awaiting: workers share the cursor but preserve input order.
   let cursor = 0;
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (cursor < items.length) {
@@ -12,6 +15,8 @@ export async function mapLimit<T, R>(items: T[], limit: number, mapper: (item: T
   return results;
 }
 
+// Retry timeouts, network errors, 429 and 5xx; other HTTP failures are terminal.
+// Cache successes for five minutes and cap entries to bound long-lived worker memory.
 export async function vexJson(url: string, headers: Record<string, string>): Promise<any> {
   const cached=pages.get(url);
   if(cached&&cached.expires>Date.now())return cached.data;
@@ -40,6 +45,8 @@ export async function vexJson(url: string, headers: Record<string, string>): Pro
   throw new Error(`Event.VEX is temporarily unavailable (${lastStatus}). Please retry.`);
 }
 
+// Fetch every page with the original filters intact. Reject the whole collection
+// if any page fails, so callers cannot publish a partial ranking as complete.
 export async function vexCollection(url: string, headers: Record<string, string>): Promise<any[]> {
   const parsed = new URL(url);
   parsed.searchParams.set('per_page', '250');
