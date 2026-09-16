@@ -3,8 +3,9 @@ import { RANKING_SEASONS, validateArchive } from '@/lib/ranking-seasons.mjs';
 import TeamDirectory from '@/components/team-directory';
 import { siteFetch } from '@/lib/client-fetch';
 import { bracketRound } from '@/lib/bracket';
+import { routeToHash, hashToRoute } from '@/lib/routes.mjs';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { parseAgenda } from '@/lib/agenda';
 import { ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BarChart3, CalendarDays, ChevronRight, Filter, Gauge, Globe2, MapPin, Menu, Search, Users, X } from 'lucide-react';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
@@ -12,27 +13,6 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
 type View = 'home' | 'events' | 'event' | 'rankings' | 'stats' | 'teams' | 'team';
-
-/** Hash routing, not path routing: GitHub Pages has no SPA fallback, so a cold
-    load of /Vex-Rank/teams/31260X would 404. A hash survives any static host. */
-function routeToHash(view:View, team:any, event:any){
-  if(view==='team') return team?.number?`#/teams/${encodeURIComponent(team.number)}`:'#/teams';
-  if(view==='event') return event?.id?`#/events/${encodeURIComponent(String(event.id))}`:'#/events';
-  if(view==='home') return '#/';
-  return `#/${view}`;
-}
-
-function hashToRoute(hash:string):{view:View;teamNumber?:string;eventId?:string}|null{
-  const parts=hash.replace(/^#\/?/,'').split('/').filter(Boolean);
-  if(!parts.length) return {view:'home'};
-  let head:string, param:string|undefined;
-  try { head=decodeURIComponent(parts[0]); param=parts[1]?decodeURIComponent(parts[1]):undefined; }
-  catch { return null; }
-  if(head==='events') return param?{view:'event',eventId:param}:{view:'events'};
-  if(head==='teams') return param?{view:'team',teamNumber:param}:{view:'teams'};
-  if(head==='rankings'||head==='stats') return {view:head as View};
-  return null;
-}
 
 function useAvailableRankingSeasons(){
   const [available,setAvailable]=useState(['2026–27 Override','2025–26 Push Back']);
@@ -173,15 +153,10 @@ export default function Home() {
   const eventRows = liveEvents;
   const teamRows = liveTeams;
 
-  // Set when a popstate drove the change, so the sync effect below does not
-  // push a duplicate entry for a navigation the browser already performed.
-  const fromPopState=useRef(false);
-
   useEffect(()=>{
     const onPop=()=>{
       const r=hashToRoute(window.location.hash);
       if(!r)return;
-      fromPopState.current=true;
       if(r.teamNumber)setSelectedTeam((current:any)=>current?.number===r.teamNumber?current:{number:r.teamNumber,name:''});
       if(r.eventId)setSelectedEvent((current:any)=>String(current?.id)===r.eventId?current:{id:r.eventId});
       setView(r.view);
@@ -196,8 +171,10 @@ export default function Home() {
   useEffect(()=>{
     if(!navigationRestored)return;
     const next=routeToHash(view,selectedTeam,selectedEvent);
+    // No guard needed for popstate: the browser has already updated the hash by
+    // the time the handler runs, so this equality check short-circuits and no
+    // duplicate entry is pushed.
     if(window.location.hash===next)return;
-    if(fromPopState.current){fromPopState.current=false;return}
     window.history.pushState(null,'',next);
   },[navigationRestored,view,selectedTeam,selectedEvent]);
 
