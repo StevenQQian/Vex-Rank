@@ -1,0 +1,24 @@
+{
+  "archives": [
+    {
+      "seasonId": 197,
+      "season": "2025–26 Push Back",
+      "path": "/rankings-2025-26-vcr3.json",
+      "modelVersion": "VCR-3.0-candidate.2",
+      "teams": 12573,
+      "events": 1548,
+      "matches": 110150,
+      "coverage": {
+        "season": 197,
+        "expectedEvents": 1681,
+        "loadedEvents": 1681,
+        "failures": [],
+        "modelVersion": "VCR-3.0-candidate.2"
+      },
+      "asOf": "2026-06-01",
+      "sha256": "654fd00b34feacaf0308cae88b5ce850caf76830d5273d99c11a729c2782efb8",
+      "bytes": 13710957
+    }
+  ]
+}
+
