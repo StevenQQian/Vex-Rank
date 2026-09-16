@@ -6,7 +6,7 @@ import { bracketRound } from '@/lib/bracket';
 
 import { useEffect, useMemo, useState } from 'react';
 import { parseAgenda } from '@/lib/agenda';
-import { ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BarChart3, CalendarDays, ChevronRight, Filter, Gauge, Globe2, MapPin, Menu, Minus, Search, Sparkles, Users, X } from 'lucide-react';
+import { ArrowLeft, ArrowRight, ArrowUp, ArrowUpRight, BarChart3, CalendarDays, ChevronRight, Filter, Gauge, Globe2, MapPin, Menu, Search, Users, X } from 'lucide-react';
 import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
@@ -31,20 +31,6 @@ const teamCacheKey=(number:string,seasonId?:string|number,teamId?:string|number)
 const teamProfileUrl=(number:string,seasonId?:string|number,teamId?:string|number)=>`/api/teams/${encodeURIComponent(number)}?profile=v8${seasonId?`&season=${seasonId}`:''}${teamId?`&teamId=${teamId}`:''}`;
 const prefetchTeam=(number:string,seasonId?:string|number,teamId?:string|number)=>cachedJson(teamProfileUrl(number,seasonId,teamId),teamHistoryCache,teamCacheKey(number,seasonId,teamId)).catch(()=>undefined);
 
-const teams = [
-  { rank: 1, number: '2775V', name: 'Jackson Area Robotics', region: 'Michigan, USA', country: 'USA', rating: 1968, change: 3, record: '38–5–1', events: 5, opr: 82.4, dpr: 31.2, ccwm: 51.2, auto: 91, ase: 84, consistency: 94, skills: 372, form: [1,1,1,0,1] },
-  { rank: 2, number: '21417A', name: 'Quantum Robotics', region: 'Ontario, Canada', country: 'Canada', rating: 1941, change: 1, record: '34–7–0', events: 5, opr: 79.6, dpr: 33.8, ccwm: 45.8, auto: 88, ase: 91, consistency: 90, skills: 388, form: [1,1,0,1,1] },
-  { rank: 3, number: '229V', name: 'Ace Robotics', region: 'California, USA', country: 'USA', rating: 1926, change: 0, record: '31–6–2', events: 4, opr: 78.9, dpr: 30.5, ccwm: 48.4, auto: 84, ase: 77, consistency: 96, skills: 361, form: [1,1,1,1,0] },
-  { rank: 4, number: '169X', name: 'The Cavalry', region: 'Singapore', country: 'Singapore', rating: 1908, change: 5, record: '29–8–1', events: 4, opr: 76.2, dpr: 35.4, ccwm: 40.8, auto: 86, ase: 89, consistency: 87, skills: 395, form: [1,0,1,1,1] },
-  { rank: 5, number: '315Y', name: 'Paradigm', region: 'Texas, USA', country: 'USA', rating: 1887, change: -2, record: '27–8–0', events: 4, opr: 74.8, dpr: 34.1, ccwm: 40.7, auto: 82, ase: 93, consistency: 82, skills: 349, form: [1,1,0,1,0] },
-  { rank: 6, number: '6627A', name: 'Nighthawk Robotics', region: 'British Columbia, Canada', country: 'Canada', rating: 1862, change: 2, record: '25–9–1', events: 5, opr: 72.5, dpr: 36.2, ccwm: 36.3, auto: 79, ase: 81, consistency: 91, skills: 342, form: [0,1,1,1,1] },
-  { rank: 7, number: '8059A', name: 'Blitz', region: 'New South Wales, Australia', country: 'Australia', rating: 1844, change: -1, record: '24–9–2', events: 4, opr: 71.2, dpr: 34.8, ccwm: 36.4, auto: 81, ase: 86, consistency: 80, skills: 356, form: [1,0,1,0,1] },
-  { rank: 8, number: '9364D', name: 'Tesseract', region: 'Massachusetts, USA', country: 'USA', rating: 1829, change: 4, record: '23–10–0', events: 4, opr: 69.9, dpr: 38.1, ccwm: 31.8, auto: 77, ase: 74, consistency: 89, skills: 335, form: [1,1,1,0,1] },
-  { rank: 9, number: '1010N', name: 'Binary', region: 'Hong Kong', country: 'Hong Kong', rating: 1808, change: -3, record: '22–10–1', events: 3, opr: 68.4, dpr: 37.5, ccwm: 30.9, auto: 80, ase: 88, consistency: 79, skills: 368, form: [0,1,0,1,1] },
-  { rank: 10, number: '7700R', name: 'Rolling Thunder', region: 'New York, USA', country: 'USA', rating: 1796, change: 1, record: '20–9–3', events: 4, opr: 67.8, dpr: 36.7, ccwm: 31.1, auto: 75, ase: 79, consistency: 85, skills: 328, form: [1,1,0,1,0] },
-  { rank: 11, number: '2587Z', name: 'DiscoBots', region: 'Texas, USA', country: 'USA', rating: 1772, change: 0, record: '19–10–2', events: 3, opr: 65.2, dpr: 39.4, ccwm: 25.8, auto: 72, ase: 82, consistency: 83, skills: 317, form: [1,0,1,1,0] },
-  { rank: 12, number: '74177A', name: 'Velocity', region: 'Ontario, Canada', country: 'Canada', rating: 1756, change: 6, record: '18–11–1', events: 4, opr: 64.9, dpr: 38.9, ccwm: 26.0, auto: 74, ase: 85, consistency: 88, skills: 331, form: [0,1,1,1,1] },
-];
 
 const events = [
   { id: 'kalahari', date: '2026-09-12', end: 'SEP 14', tier: 'Gold S', name: 'Kalahari Classic', city: 'Sandusky, Ohio', region: 'United States', class: 'Signature', format: 'In-Person', grade: 'High School', teams: 96, status: 'Registration open', weight: 1.6 },
@@ -75,16 +61,8 @@ function eventRegionsForCountry(country:string) {
   return ['All', ...matches];
 }
 
-const teamEvents = [
-  { date: 'AUG 23', event: 'Michigan Season Opener', tier: 'A', finish: 'Champions', change: 42, rating: 1968 },
-  { date: 'JUL 19', event: 'Great Lakes Summer Classic', tier: 'Silver S', finish: 'Semifinalists', change: 18, rating: 1926 },
-  { date: 'JUN 07', event: 'Motor City Invitational', tier: 'Bronze S', finish: 'Finalists', change: 31, rating: 1908 },
-  { date: 'MAY 16', event: 'Jackson Regional', tier: 'B', finish: 'Champions', change: 24, rating: 1877 },
-  { date: 'APR 28', event: 'VEX Worlds 2026', tier: 'Worlds', finish: 'Division QF', change: -11, rating: 1853 },
-];
 
 function AppLogo() { return <span className="flex items-center gap-2 font-semibold tracking-[-.04em]"><span className="grid h-8 w-8 place-items-center rounded-md bg-[#ed2b3a] text-sm italic">V</span><span className="text-xl">VEX<span className="text-[#ed2b3a]">RANK</span></span></span>; }
-function Trend({ value }: { value: number }) { return value > 0 ? <span className="inline-flex items-center gap-0.5 text-emerald-400"><ArrowUp className="h-3 w-3" />{value}</span> : value < 0 ? <span className="text-rose-400">{value}</span> : <span className="text-white/25">—</span>; }
 function liveTeamsLabel(rows:any[]) { return rows[0]?.matches ? 'Provisional live VCR' : 'Loading live VCR'; }
 function Tier({ value='Official' }: { value?: string }) { const cls = value.includes('Gold') || value === 'Worlds' ? 'bg-amber-400/10 text-amber-300 border-amber-400/20' : value.includes('Silver') ? 'bg-slate-300/10 text-slate-200 border-slate-300/20' : value.includes('Bronze') ? 'bg-orange-400/10 text-orange-300 border-orange-400/20' : 'bg-white/5 text-white/55 border-white/10'; return <span className={`inline-flex rounded-full border px-2.5 py-0.5 text-[11px] font-medium ${cls}`}>{value}</span>; }
 function EventStatus({ value='Upcoming' }: { value?: string }) { const normalized=value.toLowerCase();const cls=normalized==='cancelled'?'text-[#ff3347]':normalized==='upcoming'?'text-sky-400':'text-emerald-400';return <span className={`text-[10px] font-bold uppercase tracking-wider ${cls}`}>{value}</span>; }
@@ -169,8 +147,8 @@ export default function Home() {
   const teamRows = liveTeams;
 
   const go = (next: View) => { setView(next); setMobile(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
-  const openTeam = (team: any) => { prefetchTeam(team.number,team.seasonId,team.id);setSelectedTeam(team); setTeamReturnView(view); go('team'); };
-  const openEvent = (event:any) => { prefetchEvent(event.id);setSelectedEvent(event); go('event'); };
+  const openTeam = (team: any) => { void prefetchTeam(team.number,team.seasonId,team.id);setSelectedTeam(team); setTeamReturnView(view); go('team'); };
+  const openEvent = (event:any) => { void prefetchEvent(event.id);setSelectedEvent(event); go('event'); };
   const submitGlobal = () => { const q=globalSearch.trim(); if(q){setTeamSearch(q);setTeamRegion('All');setTeamDirectoryRegion('All');setRankingRange('All');go('teams');} };
 
   const shownEvents = useMemo(() => eventRows.filter((e:any) => {
@@ -370,7 +348,7 @@ function RankingsView({ teams: rows, meta, openTeam, savedState, setSavedState }
   useEffect(()=>{if(season==='2026–27 Override'||archives[season])return;let active=true;setArchiveError('');const base=RANKING_SEASONS[season].archive;siteFetch(base).then(response=>response.ok?response.json():Promise.reject()).then((data:any)=>{const archive=validateArchive(data,season);if(active)setArchives(old=>({...old,[season]:archive}))}).catch(()=>{if(active)setArchiveError('The season archive could not be loaded. Please retry.');});return()=>{active=false}},[season,archives,archiveRetry]);
   useEffect(()=>setVisibleCount(100),[season,rankingCountry,rankingRegion,gradeList,rankingSearch]);
   useEffect(()=>setSavedState({season,country:rankingCountry,region:rankingRegion,grade:gradeList,search:rankingSearch,visibleCount}),[season,rankingCountry,rankingRegion,gradeList,rankingSearch,visibleCount,setSavedState]);
-  const historical=archives[season];const activeRows=season==='2026–27 Override'?rows:(historical?.rankings??[]);const activeMeta=season==='2026–27 Override'?meta:historical;const countries=['All',...Array.from(new Set(activeRows.map((team:any)=>team.country).filter(Boolean))).sort()] as string[];const regionOf=(team:any)=>team.eventRegion??String(team.region??'Unassigned').split(',')[0].trim();const regions=['All',...Array.from(new Set(activeRows.filter((team:any)=>rankingCountry==='All'||team.country===rankingCountry).map(regionOf).filter(Boolean))).sort()] as string[];const filteredRows=activeRows.filter((team:any)=>(gradeList==='All teams'||team.grade===gradeList)&&(rankingCountry==='All'||team.country===rankingCountry)&&(rankingRegion==='All'||regionOf(team)===rankingRegion)&&(!rankingSearch||`${team.number} ${team.name}`.toLowerCase().includes(rankingSearch.toLowerCase())));const visibleRows=filteredRows.slice(0,visibleCount);const isFullArchive=season!=='2026–27 Override'&&Boolean(historical);
+  const historical=archives[season];const activeRows=season==='2026–27 Override'?rows:(historical?.rankings??[]);const activeMeta=season==='2026–27 Override'?meta:historical;const countries=['All',...Array.from(new Set(activeRows.map((team:any)=>team.country).filter(Boolean))).sort((a:string,b:string)=>a.localeCompare(b))] as string[];const regionOf=(team:any)=>team.eventRegion??String(team.region??'Unassigned').split(',')[0].trim();const regions=['All',...Array.from(new Set(activeRows.filter((team:any)=>rankingCountry==='All'||team.country===rankingCountry).map(regionOf).filter(Boolean))).sort((a:string,b:string)=>a.localeCompare(b))] as string[];const filteredRows=activeRows.filter((team:any)=>(gradeList==='All teams'||team.grade===gradeList)&&(rankingCountry==='All'||team.country===rankingCountry)&&(rankingRegion==='All'||regionOf(team)===rankingRegion)&&(!rankingSearch||`${team.number} ${team.name}`.toLowerCase().includes(rankingSearch.toLowerCase())));const visibleRows=filteredRows.slice(0,visibleCount);const isFullArchive=season!=='2026–27 Override'&&Boolean(historical);
   return <section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8"><PageHead eyebrow="Live VEX Competitive Rating" title="World team ranking" copy="Compare current standings with past seasons, then narrow by school level, country and event region." />
     {archiveError&&<LoadError message={archiveError} retry={()=>setArchiveRetry(value=>value+1)} />}<div className="mt-8 flex flex-wrap gap-x-7 gap-y-1 border-b border-white/[.08]">{['All teams','High School','Middle School'].map(level=><button key={level} onClick={()=>setGradeList(level)} className={`-mb-px border-b-2 pb-2.5 pt-1 text-sm ${gradeList===level?'border-[#ed2b3a] text-white':'border-transparent text-white/40 hover:text-white/75'}`}>{level==='All teams'?level:`${level} ranking`}</button>)}</div>
     <div className="mt-5 grid gap-x-6 gap-y-4 md:grid-cols-2 xl:grid-cols-4"><FilterSelect label="Season" value={season} options={availableSeasons} onChange={value=>{setSeason(value);setRankingCountry('All');setRankingRegion('All')}} /><FilterSelect label="Country" allLabel="All countries" value={rankingCountry} options={countries} onChange={value=>{setRankingCountry(value);setRankingRegion('All')}} /><FilterSelect label="Event region" allLabel="All event regions" value={rankingRegion} options={regions} onChange={setRankingRegion} /><FilterInput icon={<Search />} value={rankingSearch} onChange={setRankingSearch} placeholder="Search team number or name" /></div>
@@ -409,7 +387,7 @@ function StatRankingsView({ teams: rows, openTeam }: { teams: any[]; openTeam:(t
   };
   const active = categories[category];
   const sourceRows:any[]=skillCategory?skills:matchRows;
-  const regions=['All',...Array.from(new Set(sourceRows.map((team:any)=>team.country).filter(Boolean))).sort()] as string[];
+  const regions=['All',...Array.from(new Set(sourceRows.map((team:any)=>team.country).filter(Boolean))).sort((a:string,b:string)=>a.localeCompare(b))] as string[];
   const ranking = sourceRows.filter(team => active.qualify(team)&&(statRegion === 'All' || team.country === statRegion)).sort((a,b) => active.lower ? active.value(a)-active.value(b) : active.value(b)-active.value(a));
   const visible=ranking.slice(0,visibleCount);
   return <section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8"><PageHead eyebrow="Performance leaderboards" title="Who leads every part of the game?" copy="Go beyond the overall world ranking and discover the teams setting the standard in scoring, defense, autonomous play and strategy." />
