@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:ital,wght@0,300..800;1,300..800&family=Source+Serif+4:opsz,wght@8..60,400..700&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
 @import 'shadcn/tailwind.css';
@@ -7,9 +8,9 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-sans: var(--font-claude-sans);
+  --font-mono: var(--font-claude-mono);
+  --font-heading: var(--font-claude-serif);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -48,7 +49,7 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-body { font-family: var(--font-geist), Arial, Helvetica, sans-serif; }
+body { font-family: var(--font-claude-sans); }
 
 html { color-scheme: dark; }
 button, a, input, select { touch-action: manipulation; }
@@ -90,6 +91,13 @@ h1, h2, h3 { overflow-wrap: anywhere; }
 }
 
 :root {
+  /* Claude's own faces (Styrene / Tiempos / Copernicus) are commercially
+     licensed and cannot be bundled, so they are named first for anyone who has
+     them installed, backed by the closest open equivalents from Google Fonts. */
+  --font-claude-sans: 'Styrene B', 'Styrene A', 'Hanken Grotesk', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-claude-serif: 'Copernicus', 'Tiempos Headline', 'Tiempos Text', 'Source Serif 4', ui-serif, Georgia, 'Times New Roman', serif;
+  --font-claude-mono: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
   --background: oklch(0.13 0.01 260);
   --foreground: oklch(0.97 0.005 260);
   --card: oklch(1 0 0);
@@ -113,7 +121,7 @@ h1, h2, h3 { overflow-wrap: anywhere; }
   --chart-3: oklch(0.439 0 0);
   --chart-4: oklch(0.371 0 0);
   --chart-5: oklch(0.269 0 0);
-  --radius: 0.125rem;
+  --radius: 0.75rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -162,6 +170,166 @@ h1, h2, h3 { overflow-wrap: anywhere; }
   * {
     @apply border-border outline-ring/50;
   }
+
+  /* Corner softening. `[class~="border"]` matches only boxes with a full
+     perimeter border, so single-edge dividers (border-b, border-t, border-r)
+     stay flush. :where() keeps specificity at 0, so any explicit rounded-*
+     utility still wins. Radius is deliberately not uniform: large surfaces get
+     more, controls less, so the page does not read as one stamped-out card. */
+  [class~="border"] {
+    border-radius: var(--radius-md);
+  }
+
+  article[class~="border"], aside[class~="border"], section[class~="border"] {
+    border-radius: var(--radius-xl);
+  }
+
+  /* Preflight zeroes border-radius on button/input/select at specificity
+     (0,0,1), so these selectors carry real specificity instead of :where().
+     Explicit rounded-* utilities still win: they sit in a later cascade layer,
+     which outranks @layer base regardless of specificity. */
+  button[class~="border"], [class~="border"]:has(> input) {
+    border-radius: var(--radius-md);
+  }
+
+  input[class], select[class], textarea[class] {
+    border-radius: var(--radius-sm);
+  }
+
+  /* Display headings carry the serif. Applied by class, not by tag, so size
+     governs: long event names hold up in the serif at ~30px but turned into a
+     wall at 60px, and card titles stay sans so the serif keeps its weight. */
+  .font-display {
+    font-family: var(--font-claude-serif);
+    font-weight: 500;
+    letter-spacing: -0.012em;
+  }
+
+  /* An almanac sets long copy for reading, not for scanning: a real measure and
+     looser leading, rather than the uniform text-sm/leading-relaxed everywhere. */
+  p {
+    text-wrap: pretty;
+  }
+
+  /* Hairline rules do the grouping that boxes used to do, so they have to be
+     visible without becoming a second border weight. */
+  :where(hr) {
+    border: 0;
+    border-top: 1px solid rgb(255 255 255 / 8%);
+  }
+
+  /* Team profile is treated as a feature spread: the rest of the site is the
+     ruled almanac, this one page gets the masthead-scale lockup. Weight, not
+     colour, splits the identifier: light digits, heavy letter suffix. */
+  .team-lockup {
+    font-family: var(--font-claude-sans);
+    font-size: clamp(3.25rem, 13vw, 9rem);
+    line-height: 0.86;
+    letter-spacing: -0.045em;
+    text-transform: uppercase;
+  }
+
+  .team-lockup-digits { font-weight: 300; }
+  .team-lockup-suffix { font-weight: 800; color: #ed2b3a; }
+
+  .team-figure {
+    font-family: var(--font-claude-mono);
+    font-size: clamp(2.5rem, 6vw, 4rem);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+
+  /* Full-bleed colour band inside a max-width container. `overflow-x: clip` on
+     main absorbs the scrollbar-width overhang of 100vw without creating a
+     scroll container, so the sticky header keeps working. */
+  .team-band {
+    width: 100vw;
+    margin-inline: calc(50% - 50vw);
+  }
+
+  main { overflow-x: clip; }
+
+  /* Staggered entrance for the team profile. The resting (hidden) state lives
+     inside a no-preference query on purpose: the global reduced-motion rule
+     kills `animation`, so if opacity:0 were declared unconditionally the
+     content would stay invisible for those users instead of just unanimated. */
+  @keyframes rise {
+    from { opacity: 0; transform: translate3d(0, 16px, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .rise, .team-band .band-item { opacity: 0; }
+
+    .rise {
+      animation: rise 620ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+      animation-delay: calc(var(--i, 0) * 110ms);
+    }
+
+    /* Band items wait for .is-visible, which the in-view observer adds, so the
+       stagger plays as the band is scrolled to rather than on mount. */
+    .team-band.is-visible .band-item {
+      animation: rise 560ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+      animation-delay: calc(var(--i, 0) * 90ms);
+    }
+  }
+
+  /* Scroll-driven effects for the team profile. These run entirely on the
+     compositor via scroll-driven animations - no scroll listener, no JS - and
+     are doubly gated: @supports so Safari/Firefox render the finished state
+     statically, and no-preference so the resting opacity never strands content
+     for reduced-motion users. */
+  @keyframes hero-exit {
+    to { opacity: 0.2; transform: translate3d(0, -16%, 0); }
+  }
+
+  @keyframes section-in {
+    from { opacity: 0; transform: translate3d(0, 34px, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  @supports (animation-timeline: view()) {
+    @media (prefers-reduced-motion: no-preference) {
+      /* The lockup drifts up and dims as it leaves, so the band below feels
+         like it is being pulled over the top of it. */
+      .team-hero-parallax {
+        animation: hero-exit linear both;
+        animation-timeline: view();
+        animation-range: exit -25% exit 90%;
+      }
+
+      /* Progress is tied to scroll position rather than fired once, so these
+         track the scrollbar in both directions. */
+      .scroll-reveal {
+        animation: section-in linear both;
+        animation-timeline: view();
+        animation-range: entry 5% cover 24%;
+      }
+    }
+  }
+
+  /* Ranking figures must not reflow column to column as values change. */
+  table, [class*="tabular"], td, th {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* View and tab panel entrance. The wrapper is keyed on the active view/tab,
+     so React remounts it and the animation replays on every switch. Only
+     transform and opacity are animated, so it stays off the layout path. */
+  @keyframes view-enter {
+    from { opacity: 0; transform: translate3d(0, 10px, 0); }
+    to   { opacity: 1; transform: none; }
+  }
+
+  .view-enter {
+    animation: view-enter 300ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  }
+
+  /* Nav and segmented-control state changes should ease rather than snap. */
+  nav button, [role="tab"] {
+    transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease;
+  }
   body {
     @apply bg-background text-foreground;
   }
@@ -175,9 +343,10 @@ h1, h2, h3 { overflow-wrap: anywhere; }
   display: flex;
   height: 2.5rem;
   align-items: center;
-  border: 1px solid rgb(255 255 255 / 10%);
-  background: rgb(0 0 0 / 20%);
-  padding: 0 0.75rem;
+  border: 0;
+  border-bottom: 1px solid rgb(255 255 255 / 15%);
+  background: transparent;
+  padding: 0;
   gap: 0.5rem;
   font-size: 0.75rem;
   color: rgb(255 255 255 / 45%);
