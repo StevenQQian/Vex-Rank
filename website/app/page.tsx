@@ -1,5 +1,6 @@
 'use client';
 import { RANKING_SEASONS, validateArchive } from '@/lib/ranking-seasons.mjs';
+import TeamDirectory from '@/components/team-directory';
 import { siteFetch } from '@/lib/client-fetch';
 import { bracketRound } from '@/lib/bracket';
 
@@ -111,6 +112,7 @@ export default function Home() {
   const [rankingsRetry,setRankingsRetry]=useState(0);
   const [teamSearch, setTeamSearch] = useState('');
   const [teamRegion, setTeamRegion] = useState('All');
+  const [teamDirectoryRegion,setTeamDirectoryRegion]=useState('All');
   const [rankingRange, setRankingRange] = useState('All');
   const [rankingViewState,setRankingViewState]=useState({season:'2026–27 Override',country:'All',region:'All',grade:'All teams',search:'',visibleCount:100});
   const [selectedTeam, setSelectedTeam] = useState<any>({number:'',name:''});
@@ -121,16 +123,16 @@ export default function Home() {
   useEffect(()=>{
     try {
       const saved=JSON.parse(sessionStorage.getItem('vexrank-navigation')??'null');
-      if(saved){if(saved.view)setView(saved.view);if(saved.selectedTeam)setSelectedTeam(saved.selectedTeam);if(saved.selectedEvent)setSelectedEvent(saved.selectedEvent);if(saved.eventSearch!=null)setEventSearch(saved.eventSearch);if(saved.teamSearch!=null)setTeamSearch(saved.teamSearch);if(saved.region)setRegion(saved.region);if(saved.eventClass)setEventClass(saved.eventClass);if(saved.format)setFormat(saved.format);if(saved.time)setTime(saved.time);if(saved.grade)setGrade(saved.grade);if(saved.eventExtras)setEventExtras(saved.eventExtras);if(saved.teamRegion)setTeamRegion(saved.teamRegion);if(saved.rankingRange)setRankingRange(saved.rankingRange);if(saved.rankingViewState)setRankingViewState(saved.rankingViewState);if(saved.teamReturnView)setTeamReturnView(saved.teamReturnView);requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,saved.scrollY??0)))}
+      if(saved){if(saved.view)setView(saved.view);if(saved.selectedTeam)setSelectedTeam(saved.selectedTeam);if(saved.selectedEvent)setSelectedEvent(saved.selectedEvent);if(saved.eventSearch!=null)setEventSearch(saved.eventSearch);if(saved.teamSearch!=null)setTeamSearch(saved.teamSearch);if(saved.region)setRegion(saved.region);if(saved.eventClass)setEventClass(saved.eventClass);if(saved.format)setFormat(saved.format);if(saved.time)setTime(saved.time);if(saved.grade)setGrade(saved.grade);if(saved.eventExtras)setEventExtras(saved.eventExtras);if(saved.teamRegion)setTeamRegion(saved.teamRegion);if(saved.teamDirectoryRegion)setTeamDirectoryRegion(saved.teamDirectoryRegion);if(saved.rankingRange)setRankingRange(saved.rankingRange);if(saved.rankingViewState)setRankingViewState(saved.rankingViewState);if(saved.teamReturnView)setTeamReturnView(saved.teamReturnView);requestAnimationFrame(()=>requestAnimationFrame(()=>window.scrollTo(0,saved.scrollY??0)))}
     } catch {}
     setNavigationRestored(true);
   },[]);
 
   useEffect(()=>{
     if(!navigationRestored)return;
-    const save=()=>{try{sessionStorage.setItem('vexrank-navigation',JSON.stringify({view,selectedTeam,selectedEvent,eventSearch,teamSearch,region,eventClass,format,time,grade,eventExtras,teamRegion,rankingRange,rankingViewState,teamReturnView,scrollY:window.scrollY}));}catch{}};
+    const save=()=>{try{sessionStorage.setItem('vexrank-navigation',JSON.stringify({view,selectedTeam,selectedEvent,eventSearch,teamSearch,region,eventClass,format,time,grade,eventExtras,teamRegion,teamDirectoryRegion,rankingRange,rankingViewState,teamReturnView,scrollY:window.scrollY}));}catch{}};
     save();window.addEventListener('pagehide',save);return()=>window.removeEventListener('pagehide',save);
-  },[navigationRestored,view,selectedTeam,selectedEvent,eventSearch,teamSearch,region,eventClass,format,time,grade,eventExtras,teamRegion,rankingRange,rankingViewState,teamReturnView]);
+  },[navigationRestored,view,selectedTeam,selectedEvent,eventSearch,teamSearch,region,eventClass,format,time,grade,eventExtras,teamRegion,teamDirectoryRegion,rankingRange,rankingViewState,teamReturnView]);
 
   useEffect(() => {
     let active = true;
@@ -169,7 +171,7 @@ export default function Home() {
   const go = (next: View) => { setView(next); setMobile(false); window.scrollTo({ top: 0, behavior: 'smooth' }); };
   const openTeam = (team: any) => { prefetchTeam(team.number,team.seasonId,team.id);setSelectedTeam(team); setTeamReturnView(view); go('team'); };
   const openEvent = (event:any) => { prefetchEvent(event.id);setSelectedEvent(event); go('event'); };
-  const submitGlobal = () => { const q = globalSearch.trim().toLowerCase(); const match = teamRows.find(t => t.number.toLowerCase() === q || t.name.toLowerCase().includes(q)); if (match) openTeam(match); else if (q) { setTeamSearch(globalSearch); go('teams'); } };
+  const submitGlobal = () => { const q=globalSearch.trim(); if(q){setTeamSearch(q);setTeamRegion('All');setTeamDirectoryRegion('All');setRankingRange('All');go('teams');} };
 
   const shownEvents = useMemo(() => eventRows.filter((e:any) => {
     if (!eventExtras.includeCanceled && /cancell?ed/i.test(e.status ?? e.name)) return false;
@@ -182,7 +184,6 @@ export default function Home() {
     const today=new Date().toISOString().slice(0,10);const next30=new Date(Date.now()+30*86400000).toISOString().slice(0,10);const normalize=(value:string)=>value.toLowerCase().replace(/[^a-z0-9]/g,'');const seasonLabel=String(e.season??'').includes('2026-2027')||!e.season?'2026–27: Override':String(e.season??'').includes('2025-2026')?'2025–26: Push Back':String(e.season??'').includes('2024-2025')?'2024–25: High Stakes':String(e.season??'').includes('2023-2024')?'2023–24: Over Under':e.season;
     return (!eventSearch || `${e.name} ${e.city}`.toLowerCase().includes(eventSearch.toLowerCase())) && (region === 'All' || normalize(e.region) === normalize(region)) && (eventExtras.season==='All'||seasonLabel===eventExtras.season) && (eventClass === 'All' || eventType === eventClass) && (format === 'All' || eventFormats.includes(format)) && (grade === 'All' || e.grade === grade || e.grade === 'Mixed') && (time === 'All events' || (time === 'Upcoming only'&&e.date>=today) || (time === 'Next 30 days' && e.date>=today&&e.date<=next30)) && (eventExtras.level === 'All' || level === eventExtras.level) && (!eventExtras.from || e.date >= eventExtras.from) && (!eventExtras.to || e.date <= eventExtras.to) && (eventExtras.eventRegion === 'All' || normalize(eventRegion)===normalize(eventExtras.eventRegion)) && (!eventExtras.city || e.city.toLowerCase().includes(eventExtras.city.toLowerCase())) && (!eventExtras.affiliation || e.name.toLowerCase().includes(eventExtras.affiliation.toLowerCase())) && (!eventExtras.registrationOpen || e.status === 'Registration open') && (!eventExtras.spotsOpen || e.status === 'Registration open') && (!eventExtras.worldQualifier || worldQualifier) && (!eventExtras.girlPowered || girlPowered);
   }), [eventRows, eventSearch, region, eventClass, format, time, grade, eventExtras]);
-  const shownTeams = useMemo(() => teamRows.filter(t => (!teamSearch || `${t.number} ${t.name}`.toLowerCase().includes(teamSearch.toLowerCase())) && (teamRegion === 'All' || t.country === teamRegion) && (rankingRange === 'All' || (rankingRange === 'Top 5' && t.rank <= 5) || (rankingRange === 'Top 10' && t.rank <= 10) || (rankingRange === '11–50' && t.rank >= 11))), [teamRows, teamSearch, teamRegion, rankingRange]);
 
 
   return <main className="min-h-screen bg-[#090b0f] text-[#f4f5f7]">
@@ -207,7 +208,7 @@ export default function Home() {
     {(view==='rankings'||view==='stats'||view==='home')&&rankingsError&&<LoadError message={rankingsError} retry={()=>setRankingsRetry(value=>value+1)} />}
     {view === 'rankings' && <RankingsView teams={teamRows} meta={rankingsMeta} openTeam={openTeam} savedState={rankingViewState} setSavedState={setRankingViewState} />}
     {view === 'stats' && <StatRankingsView teams={teamRows} openTeam={openTeam} />}
-    {view === 'teams' && <TeamsView results={shownTeams} search={teamSearch} setSearch={setTeamSearch} region={teamRegion} setRegion={setTeamRegion} range={rankingRange} setRange={setRankingRange} openTeam={openTeam} />}
+    {view === 'teams' && <TeamDirectory search={teamSearch} setSearch={setTeamSearch} country={teamRegion} setCountry={setTeamRegion} region={teamDirectoryRegion} setRegion={setTeamDirectoryRegion} grade={rankingRange} setGrade={setRankingRange} openTeam={openTeam} />}
     {view === 'team' && <TeamView key={`${selectedTeam.number}:${selectedTeam.seasonId??selectedTeam.season??''}`} team={selectedTeam} goBack={() => go(teamReturnView)} backLabel={teamReturnView==='rankings'?'rankings':teamReturnView==='stats'?'stat leaders':teamReturnView==='events'||teamReturnView==='event'?'event':'teams'} openEvent={openEvent} />}
     </div>
 
@@ -421,6 +422,7 @@ function StatRankingsView({ teams: rows, openTeam }: { teams: any[]; openTeam:(t
   </section>;
 }
 
+<<<<<<< feat/editorial-ui-redesign
 function TeamsView({ results, search, setSearch, region, setRegion, range, setRange, openTeam }: any) {
   const [visibleCount,setVisibleCount]=useState(60);
   const [archive,setArchive]=useState<any>(null);const [archiveLoading,setArchiveLoading]=useState(false);const [archiveError,setArchiveError]=useState('');
@@ -476,6 +478,8 @@ function useReducedMotion(){
   return reduce;
 }
 
+=======
+>>>>>>> main
 function SeasonRatingChart({data,onOpenEvent}:{data:any[];onOpenEvent:(point:any)=>void}) {
   const [selected,setSelected]=useState<any>(data.at(-1));
   useEffect(()=>setSelected(data.at(-1)),[data]);

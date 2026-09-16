@@ -54,6 +54,11 @@ export default {
     const archiveSeasons:Record<string,string>={'197':'2025-26','190':'2024-25','181':'2023-24','173':'2022-23'};
     const incoming=new URL(request.url),archiveSeason=incoming.searchParams.get('season');
     if(incoming.pathname==='/api/archive-manifest')return cors(await env.ARCHIVES.fetch(new Request(new URL('/manifest.json',incoming.origin))));
+    if(incoming.pathname==='/api/team-directory'){
+      const asset=await env.ARCHIVES.fetch(new Request(new URL('/team-directory.json',incoming.origin)));
+      if(!asset.ok)return cors(Response.json({error:'Team directory is temporarily unavailable.'},{status:503}));
+      const response=cors(asset);response.headers.set('Cache-Control','public,max-age=3600');return response;
+    }
     // Historical rankings come only from published static archives. A missing asset
     // is a 503, not a fallback to the live route's partial event sample.
     const archivePath=/^\/rankings-20\d{2}-\d{2}-vcr3\.json$/.test(incoming.pathname)?incoming.pathname:incoming.pathname==='/api/rankings'&&archiveSeason&&archiveSeasons[archiveSeason]?`/rankings-${archiveSeasons[archiveSeason]}-vcr3.json`:null;
