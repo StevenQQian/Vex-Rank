@@ -422,25 +422,6 @@ function StatRankingsView({ teams: rows, openTeam }: { teams: any[]; openTeam:(t
   </section>;
 }
 
-<<<<<<< feat/editorial-ui-redesign
-function TeamsView({ results, search, setSearch, region, setRegion, range, setRange, openTeam }: any) {
-  const [visibleCount,setVisibleCount]=useState(60);
-  const [archive,setArchive]=useState<any>(null);const [archiveLoading,setArchiveLoading]=useState(false);const [archiveError,setArchiveError]=useState('');
-  useEffect(()=>{const number=search.trim().toUpperCase();if(!/^[0-9]+[A-Z0-9-]+$/.test(number)){setArchive(null);setArchiveError('');return}const timer=setTimeout(()=>{setArchiveLoading(true);setArchiveError('');cachedJson(`/api/teams/${encodeURIComponent(number)}?profile=v7`,teamHistoryCache,number).then(setArchive).catch(error=>{setArchive(null);setArchiveError(error.message)}).finally(()=>setArchiveLoading(false))},200);return()=>clearTimeout(timer)},[search]);
-  return <section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8"><PageHead eyebrow="Team directory" title="Find any V5RC team" copy="Search by team number or name, then open a complete competitive profile." />
-    <div className="mt-8 grid gap-x-6 gap-y-4 md:grid-cols-[2fr_1fr_1fr]"><label className="relative"><Search className="absolute left-3 top-3 h-4 w-4 text-white/35" /><input autoFocus value={search} onChange={e => setSearch(e.target.value)} placeholder="Try 8829C or 55288A" className="h-10 w-full border border-white/10 bg-black/20 pl-9 pr-3 text-sm outline-none focus:border-white/30" /></label><NativeSelect value={region} onChange={e => setRegion(e.target.value)} className="w-full [&_select]:h-10 [&_select]:rounded-lg [&_select]:border-white/10 [&_select]:bg-black/20"><NativeSelectOption>All</NativeSelectOption>{['USA','Canada','Singapore','Australia','Hong Kong'].map(x => <NativeSelectOption key={x}>{x}</NativeSelectOption>)}</NativeSelect><NativeSelect value={range} onChange={e => setRange(e.target.value)} className="w-full [&_select]:h-10 [&_select]:rounded-lg [&_select]:border-white/10 [&_select]:bg-black/20"><NativeSelectOption>All</NativeSelectOption><NativeSelectOption>Top 5</NativeSelectOption><NativeSelectOption>Top 10</NativeSelectOption><NativeSelectOption>11–50</NativeSelectOption></NativeSelect></div>
-    {archiveLoading&&<p className="mt-4 text-sm text-white/40">Searching the complete Event.VEX team archive…</p>}
-    {archive&&<button onClick={()=>openTeam({...archive.team,history:archive})} className="mt-4 flex w-full items-center gap-4 border border-[#ed2b3a]/40 bg-[#ed2b3a]/[.07] p-5 text-left hover:border-[#ed2b3a]"><span className="grid h-12 w-12 place-items-center rounded-lg bg-[#ed2b3a] font-semibold">{archive.team.number.slice(-1)}</span><span><b className="block text-lg">{archive.team.number} · {archive.team.name}</b><small className="text-white/45">{archive.team.active?'Active this season':'Inactive this season'} · {archive.team.seasons} seasons · {archive.events.length} events · {archive.awards.length} awards</small></span><ArrowRight className="ml-auto" /></button>}
-    {archiveError&&<p className="mt-4 text-sm text-rose-300">{archiveError}</p>}
-    <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">{results.slice(0,visibleCount).map((t:any) => <button key={t.number} onClick={() => openTeam(t)} className="group border border-white/10 bg-[#101319] p-5 text-left hover:-translate-y-0.5 hover:border-white/25"><div className="flex items-start justify-between"><span className="grid h-12 w-12 place-items-center rounded-lg bg-white/[.04] font-semibold text-white/35">#{t.rank}</span><span className="font-mono text-lg font-semibold">{t.rating}</span></div><h2 className="mt-5 text-xl font-semibold group-hover:text-[#ed2b3a]">{t.number}</h2><p className="text-sm text-white/65">{t.name}</p><p className="mt-3 text-xs text-white/35">{t.region}</p><div className="mt-5 grid grid-cols-3 border-t border-white/10 pt-4 text-xs"><span><small className="block text-white/30">Record</small><b className="mt-1 block font-mono">{t.record}</b></span><span><small className="block text-white/30">Events</small><b className="mt-1 block">{t.events}</b></span><span><small className="block text-white/30">Movement</small><b className="mt-1 block"><Trend value={t.change} /></b></span></div></button>)}{!results.length&&!archive&&!archiveLoading && <div className="md:col-span-2 xl:col-span-3"><Empty text="No current-season ranking matches. Enter the complete team number to search the historical archive." /></div>}</div>
-    {visibleCount<results.length&&<button onClick={()=>setVisibleCount((count:number)=>count+120)} className="mt-4 w-full border border-white/10 bg-[#101319] py-3 text-sm text-white/50 hover:border-white/30 hover:text-white">Show more teams · {results.length-visibleCount} remaining</button>}
-  </section>;
-}
-
-/** True once the element has scrolled into view; latches so the reveal plays once.
-    Uses a callback ref, not a stored ref: the chart early-returns while team
-    history loads, so the node appears after mount and a [] effect would have
-    already bailed on a null ref. */
 function useInView<T extends HTMLElement>(){
   const [node,setNode]=useState<T|null>(null);
   const [inView,setInView]=useState(false);
@@ -478,8 +459,6 @@ function useReducedMotion(){
   return reduce;
 }
 
-=======
->>>>>>> main
 function SeasonRatingChart({data,onOpenEvent}:{data:any[];onOpenEvent:(point:any)=>void}) {
   const [selected,setSelected]=useState<any>(data.at(-1));
   useEffect(()=>setSelected(data.at(-1)),[data]);
