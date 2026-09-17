@@ -13,17 +13,19 @@ import Foundation
 public struct RankingsResponse: Codable, Sendable {
     public let rankings: [TeamRanking]
 
-    /// Rankings ordered by the number the UI shows, largest first, with the
-    /// team number breaking ties.
+    /// Rankings in rank order, which is the order the rows appear to follow.
     ///
-    /// The client does not trust the server's order. The deployed Worker still
-    /// sorts by `rating - confidence` while returning `rating`, so its own
-    /// payload is not monotonic in the value a table would display - the fix
-    /// for that is merged on the web but the API has not been redeployed.
-    /// Sorting here means the app is correct either way, and stays correct if
-    /// the server changes underneath it.
+    /// The deployed Worker ranks by `rating - confidence` - an uncertainty-aware
+    /// measure - while also returning the raw `rating`. So one of the two
+    /// columns is always going to look out of order.
+    ///
+    /// Ordering by `rank` is the lesser evil: the leading element of every row
+    /// then reads 1, 2, 3, and the rating varies with its own uncertainty
+    /// printed beside it, which explains the variation. Sorting by rating
+    /// instead makes the ratings tidy but prints "#2" above "#1", which no
+    /// reader will accept.
     public var sortedForDisplay: [TeamRanking] {
-        rankings.sorted { ($0.sortKey, $1.number) > ($1.sortKey, $0.number) }
+        rankings.sorted { ($0.rank, $0.number) < ($1.rank, $1.number) }
     }
     public let eventsProcessed: Int
     public let matchesProcessed: Int

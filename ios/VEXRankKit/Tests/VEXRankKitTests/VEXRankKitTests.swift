@@ -24,10 +24,13 @@ final class DecodingTests: XCTestCase {
         XCTAssertGreaterThan(leader.rating, 0)
     }
 
-    func testSortedForDisplayIsMonotonicInTheDisplayedRating() throws {
+    func testSortedForDisplayIsMonotonicInRank() throws {
         let response = try JSONDecoder().decode(RankingsResponse.self, from: fixture("rankings"))
-        let ratings = response.sortedForDisplay.map(\.sortKey)
-        XCTAssertEqual(ratings, ratings.sorted(by: >), "displayed rating must be non-increasing down the table")
+        let ranks = response.sortedForDisplay.map(\.rank)
+        // The rank badge leads every row, so it is the column that must be
+        // ordered. Sorting by rating instead prints "#2" above "#1".
+        XCTAssertEqual(ranks, ranks.sorted(), "rank must increase down the table")
+        XCTAssertEqual(ranks.first, 1)
     }
 
     func testServerOrderIsNotYetMonotonic() throws {
@@ -40,8 +43,7 @@ final class DecodingTests: XCTestCase {
         let response = try JSONDecoder().decode(RankingsResponse.self, from: fixture("rankings"))
         let asServed = response.rankings.map(\.sortKey)
         let outOfOrder = zip(asServed, asServed.dropFirst()).filter { $1 > $0 }.count
-        XCTAssertGreaterThan(outOfOrder, 0, "server order looks fixed now - drop this test and the client-side sort")
-        XCTAssertNotEqual(asServed, response.sortedForDisplay.map(\.sortKey))
+        XCTAssertGreaterThan(outOfOrder, 0, "server order looks fixed now - rating and rank agree, so this note can go")
     }
 
     func testDecodesLiveTeamProfile() throws {
