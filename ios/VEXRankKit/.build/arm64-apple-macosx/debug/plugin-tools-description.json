@@ -41,6 +41,10 @@
       "inputs" : [
         {
           "kind" : "file",
+          "name" : "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Events.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Models.swift"
         },
         {
@@ -76,6 +80,7 @@
       "moduleName" : "VEXRankKit",
       "moduleOutputPath" : "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/Modules/VEXRankKit.swiftmodule",
       "objects" : [
+        "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Events.swift.o",
         "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Models.swift.o",
         "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/SignedNumberView.swift.o",
         "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/StrokeGlyphs.swift.o",
@@ -142,6 +147,10 @@
       "outputs" : [
         {
           "kind" : "file",
+          "name" : "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Events.swift.o"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Models.swift.o"
         },
         {
@@ -171,6 +180,7 @@
       ],
       "prepareForIndexing" : false,
       "sources" : [
+        "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Events.swift",
         "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Models.swift",
         "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/SignedNumberView.swift",
         "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/StrokeGlyphs.swift",
@@ -408,6 +418,7 @@
       "-package-name",
       "vexrankkit",
       "-c",
+      "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Events.swift",
       "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Models.swift",
       "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/SignedNumberView.swift",
       "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/StrokeGlyphs.swift",
@@ -648,6 +659,10 @@
         },
         {
           "kind" : "file",
+          "name" : "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Events.swift"
+        },
+        {
+          "kind" : "file",
           "name" : "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Models.swift"
         },
         {
@@ -693,6 +708,10 @@
         {
           "kind" : "virtual",
           "name" : "<link-file-list>"
+        },
+        {
+          "kind" : "file",
+          "name" : "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Events.swift.o"
         },
         {
           "kind" : "file",

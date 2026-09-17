@@ -17,26 +17,38 @@ struct VEXRankApp: App {
 
     var body: some Scene {
         WindowGroup {
-            NavigationStack(path: $path) {
-                RankingsListView()
-                    .navigationTitle("World ranking")
-                    .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
-                    .toolbar {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Menu {
-                                Picker("Colour theme", selection: $themeID) {
-                                    ForEach(VEXTheme.all) { Text($0.name).tag($0.id) }
-                                }
-                            } label: {
-                                Image(systemName: "circle.lefthalf.filled")
-                            }
-                        }
-                    }
+            TabView {
+                NavigationStack(path: $path) {
+                    RankingsListView()
+                        .navigationTitle("World ranking")
+                        .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .toolbar { themeMenu }
+                }
+                .tabItem { Label("Rankings", systemImage: "trophy") }
+
+                NavigationStack {
+                    EventsListView()
+                        .navigationTitle("Events")
+                        .toolbar { themeMenu }
+                }
+                .tabItem { Label("Events", systemImage: "calendar") }
             }
             .onAppear { if let team = Self.launchTeam { path.append(team) } }
             .environment(\.vexTheme, VEXTheme.named(themeID))
             .preferredColorScheme(.dark)
             .tint(VEXTheme.named(themeID).accent)
+        }
+    }
+
+    private var themeMenu: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Menu {
+                Picker("Colour theme", selection: $themeID) {
+                    ForEach(VEXTheme.all) { Text($0.name).tag($0.id) }
+                }
+            } label: {
+                Image(systemName: "circle.lefthalf.filled")
+            }
         }
     }
 }

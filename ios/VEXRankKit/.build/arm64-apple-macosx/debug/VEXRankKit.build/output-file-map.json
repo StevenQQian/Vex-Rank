@@ -2,6 +2,13 @@
   "": {
     "swift-dependencies": "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/master.swiftdeps"
   },
+  "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Events.swift": {
+    "dependencies": "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Events.d",
+    "object": "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Events.swift.o",
+    "swiftmodule": "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Events~partial.swiftmodule",
+    "swift-dependencies": "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Events.swiftdeps",
+    "diagnostics": "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Events.dia"
+  },
   "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/Sources/VEXRankKit/Models.swift": {
     "dependencies": "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Models.d",
     "object": "/Users/stevenqqian/Documents/Vex-Rank/ios/VEXRankKit/.build/arm64-apple-macosx/debug/VEXRankKit.build/Models.swift.o",

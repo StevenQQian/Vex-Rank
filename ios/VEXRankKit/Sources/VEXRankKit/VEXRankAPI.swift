@@ -50,6 +50,10 @@ public actor VEXRankAPI {
         return try await get(path)
     }
 
+    public func events(season: Int = 204) async throws -> EventsResponse {
+        try await get("/api/events?season=\(season)&classification=v49")
+    }
+
     public func teamProfile(number: String, season: Int? = nil) async throws -> TeamProfileResponse {
         let encoded = number.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? number
         var path = "/api/teams/\(encoded)?profile=v8"

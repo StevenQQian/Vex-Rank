@@ -5,6 +5,7 @@ import VEXRankKit
 struct RankingsListView: View {
     @Environment(\.vexTheme) private var theme
     @State private var model = RankingsModel()
+    @State private var query = ""
 
     var body: some View {
         Group {
@@ -25,11 +26,26 @@ struct RankingsListView: View {
                         .tint(theme.accent)
                 }
             case .loaded(let teams):
-                list(teams)
+                let shown = filter(teams)
+                if shown.isEmpty {
+                    ContentUnavailableView.search(text: query)
+                } else {
+                    list(shown)
+                }
             }
         }
         .background(theme.page)
+        .searchable(text: $query, prompt: "Search team number or name")
         .task { await model.load() }
+    }
+
+    private func filter(_ teams: [TeamRanking]) -> [TeamRanking] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return teams }
+        return teams.filter {
+            $0.number.localizedCaseInsensitiveContains(trimmed)
+            || $0.name.localizedCaseInsensitiveContains(trimmed)
+        }
     }
 
     private func list(_ teams: [TeamRanking]) -> some View {

@@ -202,3 +202,58 @@ final class ThemeTests: XCTestCase {
     }
 }
 #endif
+
+final class EventDecodingTests: XCTestCase {
+    private func events() throws -> [VEXEvent] {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/events", withExtension: "json"))
+        return try JSONDecoder().decode(EventsResponse.self, from: Data(contentsOf: url)).events
+    }
+
+    func testDecodesTheWholeLiveFeed() throws {
+        let all = try events()
+        XCTAssertGreaterThan(all.count, 500)
+        XCTAssertFalse(all.contains { $0.name.isEmpty })
+    }
+
+    func testClassKeywordFieldIsMappedNotDropped() throws {
+        // `class` is a Swift keyword; a silent mapping failure would leave every
+        // value nil and nothing else would notice.
+        let all = try events()
+        XCTAssertTrue(all.contains { $0.eventClass != nil }, "no event carried a class value")
+    }
+
+    func testCalendarDayParsesAndUpcomingSplitsTheFeed() throws {
+        let all = try events()
+        XCTAssertTrue(all.allSatisfy { $0.day != nil }, "an event date failed to parse")
+        let upcoming = all.filter(\.isUpcoming)
+        XCTAssertGreaterThan(upcoming.count, 0)
+        XCTAssertLessThan(upcoming.count, all.count, "feed should span past and future")
+    }
+
+    func testPlaceDoesNotRepeatComponents() throws {
+        // city carries "City, Region" and eventRegion repeats the region, which
+        // rendered as "Hamburg, Hamburg, Hamburg" before deduplication.
+        for event in try events() {
+            let parts = event.place.split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespaces).lowercased()
+            }
+            XCTAssertEqual(Set(parts).count, parts.count, "repeated component in \(event.place)")
+        }
+    }
+
+    func testPlaceKeepsMostSpecificFirst() throws {
+        let all = try events()
+        let hamburg = all.first { $0.city == "Hamburg, Hamburg" }
+        if let hamburg { XCTAssertEqual(hamburg.place, "Hamburg, Germany") }
+        let auckland = all.first { $0.city == "Auckland, Auckland" }
+        if let auckland { XCTAssertEqual(auckland.place, "Auckland, New Zealand") }
+    }
+
+    func testPlaceJoinsWhatIsPresentWithoutStrayCommas() throws {
+        let all = try events()
+        for event in all.prefix(200) {
+            XCTAssertFalse(event.place.hasPrefix(", "), "leading comma in \(event.place)")
+            XCTAssertFalse(event.place.hasSuffix(", "), "trailing comma in \(event.place)")
+        }
+    }
+}
