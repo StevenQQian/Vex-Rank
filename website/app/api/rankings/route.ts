@@ -16,7 +16,6 @@ type TeamState={id:number;number:string;rating:number;matches:number;wins:number
 
 const gradeFromContext=(value:string)=>{const text=String(value??'').toLowerCase().replace(/[_/-]+/g,' ');const middle=/\bmiddle school\b|\bjunior high\b|\bjr\.? high\b|\bms\b/.test(text);const high=/\bhigh school\b|\bsenior high\b|\bhs\b/.test(text);return middle&&!high?'Middle School':high&&!middle?'High School':null};
 const gradeFromOrganization=(value:string)=>/\bmiddle school\b|\bjunior high\b|\bjr\.? high\b|\bintermediate school\b|\belementary school\b/i.test(String(value??''))?'Middle School':/\bhigh school\b|\bsenior high\b|\bsecondary school\b/i.test(String(value??''))?'High School':null;
-async function fetchWithRetry(url:string,headers:Record<string,string>,attempt=0):Promise<Response>{const response=await fetch(url,{headers});if((response.status===429||response.status>=500)&&attempt<3){await new Promise(resolve=>setTimeout(resolve,500*(attempt+1)));return fetchWithRetry(url,headers,attempt+1)}return response}
 async function readCache(request:Request){try{return await (globalThis as any).caches?.default?.match(request)}catch{return undefined}}
 async function writeCache(request:Request,response:Response){try{await (globalThis as any).caches?.default?.put(request,response.clone())}catch{}}
 

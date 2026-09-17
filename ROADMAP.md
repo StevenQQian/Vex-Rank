@@ -28,7 +28,12 @@ Legend:
 - Ranking list is sorted by one number and displays another (`app/api/rankings/route.ts` sorts by `displayedStrength = decayedRating - confidence` but renders `decayedRating`. 203 of 585 teams therefore show a rating higher than the team ranked above them. #1 31260X shows 1567 while #2 41103C shows 1569. This is the most visible symptom and needs a product decision: show the conservative number, show both, or sort by the displayed one.) [9/17/2026]
 - Graph and ranking are computed from different event sets (`/api/rankings` processes only the selected season from a fresh state map, so every team restarts at 1500. `/api/teams/[number]` walks the team's whole career in one continuous state. For a veteran team the two diverge badly: 31260X reads 1567 in the rankings and 1678 at the end of its graph, a gap of 111.) [9/17/2026]
 - Graph ignores the recency decay the ranking applies (The ranking sums `rawChange * recencyWeight(eventDate, cutoff)`; the graph plots the undecayed running `rating`. This is why even single-season teams disagree: 22020V 1534 vs 1574, 52111A 1563 vs 1600.) [9/17/2026]
+- Fourth cause found and it is intentional, not a bug (`/api/rankings` ends its event filter with `.slice(-36)`: the live ranking replays only the season's 36 most recent completed events, which is what the "Live official-data sample" caption in the rankings header refers to. The team graph uses all of a team's events. 22020V reads 1 event / 11 matches in the ranking and 2 events / 23 matches in its profile for exactly this reason. Not fixable by aligning code - it is a deliberate limit. The team page now says so.) [9/17/2026] {9/17/2026}
 - Note: the algorithm itself may be correct. Two of the three are surfaces disagreeing, not the model being wrong. Worth splitting into "is the model right" and "do the surfaces agree", because the second is definitely no. [9/17/2026]
+
+### Scoring constants disagreed between live and archives
+
+- Live rankings and historical archives used different maths (`app/api/rankings/route.ts` floored confidence at 35 while `scripts/build-historical-ranking.mjs` and `scripts/rebuild-season-archives.mjs` floored it at 25, and the recency curve was duplicated three times. A 2025-26 archived rating was therefore not comparable with a 2026-27 live one, even though the season selector puts them side by side. All three now import lib/vcr-scoring.mjs. Archives must be regenerated for this to take effect.) [9/17/2026] {9/17/2026}
 
 ### Team Logo — the API does not have it
 

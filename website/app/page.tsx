@@ -542,7 +542,7 @@ function SeasonRatingChart({data,onOpenEvent}:{data:any[];onOpenEvent:(point:any
           </LineChart>
         </ResponsiveContainer>
       </div>
-      <p className="mt-3 text-xs text-white/50">Select any point to inspect the tournament. Movement is replayed from the team’s official scored matches and grouped by event.</p>
+      <p className="mt-3 text-xs text-white/50">Select any point to inspect the tournament. Movement is replayed from the team’s official scored matches and grouped by event. The published world ranking is computed from a rolling sample of the season’s most recent official events, so a team’s earliest results may sit outside it — this graph can therefore run ahead of the rating shown in the rankings table.</p>
     </div>
   </article>;
 }
