@@ -225,7 +225,7 @@ export default function Home() {
     if(!['home','rankings','stats','teams'].includes(view)||rankingsMeta)return;
     let active=true;
     setRankingsError('');
-    fetchWithBackoff('/api/rankings?data=v49').then(response=>response.ok?response.json():Promise.reject(new Error('Rankings request failed'))).then((payload:any)=>{if(active&&Array.isArray(payload.rankings)){setLiveTeams(payload.rankings);setRankingsMeta(payload)}}).catch(()=>{if(active)setRankingsError(describeFetchError(error,'Rankings are temporarily unavailable. Please retry.'));});
+    fetchWithBackoff('/api/rankings?data=v49').then(response=>response.ok?response.json():Promise.reject(new Error('Rankings request failed'))).then((payload:any)=>{if(active&&Array.isArray(payload.rankings)){setLiveTeams(payload.rankings);setRankingsMeta(payload)}}).catch((error:any)=>{if(active)setRankingsError(describeFetchError(error,'Rankings are temporarily unavailable. Please retry.'));});
     return()=>{active=false};
   },[rankingsRetry,view]);
 
