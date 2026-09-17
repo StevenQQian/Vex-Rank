@@ -6,18 +6,24 @@ import VEXRankKit
 struct VEXRankApp: App {
     @AppStorage("vexrank-theme") private var themeID: String = VEXTheme.midnight.id
     @State private var path = NavigationPath()
+    @State private var eventPath = NavigationPath()
+    @State private var statPath = NavigationPath()
+    @State private var tab = 0
 
     /// `-team 31260X` opens straight to a profile. Used for verifying the
     /// profile without tapping, and the hook a URL scheme will reuse.
-    private static var launchTeam: String? {
-        guard let index = CommandLine.arguments.firstIndex(of: "-team"),
+    private static func launchArgument(_ flag: String) -> String? {
+        guard let index = CommandLine.arguments.firstIndex(of: flag),
               CommandLine.arguments.indices.contains(index + 1) else { return nil }
         return CommandLine.arguments[index + 1]
     }
 
+    private static var launchTeam: String? { launchArgument("-team") }
+    private static var launchEvent: String? { launchArgument("-event") }
+
     var body: some Scene {
         WindowGroup {
-            TabView {
+            TabView(selection: $tab) {
                 NavigationStack(path: $path) {
                     RankingsListView()
                         .navigationTitle("World ranking")
@@ -25,15 +31,30 @@ struct VEXRankApp: App {
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Rankings", systemImage: "trophy") }
+                .tag(0)
 
-                NavigationStack {
-                    EventsListView()
+                NavigationStack(path: $eventPath) {
+                    EventsListView(openEventID: Self.launchEvent, path: $eventPath)
                         .navigationTitle("Events")
+                        .navigationDestination(for: VEXEvent.self) { EventDetailView(event: $0) }
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Events", systemImage: "calendar") }
+                .tag(1)
+
+                NavigationStack(path: $statPath) {
+                    StatLeadersView()
+                        .navigationTitle("Stat leaders")
+                        .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .toolbar { themeMenu }
+                }
+                .tabItem { Label("Stats", systemImage: "chart.bar") }
+                .tag(2)
             }
-            .onAppear { if let team = Self.launchTeam { path.append(team) } }
+            .onAppear {
+                if let team = Self.launchTeam { path.append(team) }
+                if Self.launchEvent != nil { tab = 1 }
+            }
             .environment(\.vexTheme, VEXTheme.named(themeID))
             .preferredColorScheme(.dark)
             .tint(VEXTheme.named(themeID).accent)

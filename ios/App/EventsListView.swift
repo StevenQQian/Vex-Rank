@@ -3,6 +3,11 @@ import VEXRankKit
 
 @available(iOS 17.0, *)
 struct EventsListView: View {
+    /// Set by the -event launch argument; resolved against the feed once it
+    /// loads, since the detail view needs the whole event, not just an id.
+    var openEventID: String? = nil
+    var path: Binding<NavigationPath>? = nil
+
     @Environment(\.vexTheme) private var theme
     @State private var model = EventsModel()
     @State private var upcomingOnly = true
@@ -24,7 +29,14 @@ struct EventsListView: View {
         }
         .background(theme.page)
         .searchable(text: $query, prompt: "Search events by name or place")
-        .task { await model.load() }
+        .task {
+            await model.load()
+            if case .loaded(let events) = model.state,
+               let id = openEventID,
+               let match = events.first(where: { $0.id == id }) {
+                path?.wrappedValue.append(match)
+            }
+        }
     }
 
     @ViewBuilder
@@ -67,6 +79,7 @@ struct EventsListView: View {
 
     private func list(_ events: [VEXEvent]) -> some View {
         List(events) { event in
+            NavigationLink(value: event) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(event.day.map { $0.formatted(.dateTime.month(.abbreviated).day()) } ?? event.date)
@@ -94,6 +107,7 @@ struct EventsListView: View {
                 .font(.caption).foregroundStyle(.secondary)
             }
             .padding(.vertical, 4)
+            }
             .listRowBackground(theme.surface)
         }
         .listStyle(.plain)

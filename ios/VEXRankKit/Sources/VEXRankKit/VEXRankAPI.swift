@@ -54,6 +54,15 @@ public actor VEXRankAPI {
         try await get("/api/events?season=\(season)&classification=v49")
     }
 
+    public func skills(season: Int = 204) async throws -> SkillsResponse {
+        try await get("/api/skills?season=\(season)")
+    }
+
+    public func eventDetail(id: String) async throws -> EventDetailResponse {
+        let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return try await get("/api/events/\(encoded)?results=v49")
+    }
+
     public func teamProfile(number: String, season: Int? = nil) async throws -> TeamProfileResponse {
         let encoded = number.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? number
         var path = "/api/teams/\(encoded)?profile=v8"

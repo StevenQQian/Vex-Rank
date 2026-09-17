@@ -257,3 +257,161 @@ final class EventDecodingTests: XCTestCase {
         }
     }
 }
+
+final class EventDetailTests: XCTestCase {
+    private func detail() throws -> EventDetailResponse {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/event-detail", withExtension: "json"))
+        return try JSONDecoder().decode(EventDetailResponse.self, from: Data(contentsOf: url))
+    }
+
+    func testDecodesACompletedEventWithResults() throws {
+        let response = try detail()
+        XCTAssertFalse(response.event.name.isEmpty)
+        XCTAssertGreaterThan(response.teams.count, 10)
+        XCTAssertGreaterThan(response.divisions.count, 0)
+        XCTAssertGreaterThan(response.awards.count, 0)
+    }
+
+    func testDivisionRankingsAreOrderedAndFormatted() throws {
+        let division = try XCTUnwrap(try detail().divisions.first)
+        XCTAssertGreaterThan(division.rankings.count, 10)
+        let sorted = division.rankings.sorted { $0.rank < $1.rank }
+        let top = try XCTUnwrap(sorted.first)
+        XCTAssertEqual(top.rank, 1)
+        XCTAssertEqual(top.record, "\(top.wins)–\(top.losses)–\(top.ties)")
+    }
+
+    func testDivisionTeamCarriesTheNumberInItsNameField() throws {
+        // The API puts the team number in `team.name`. If that ever changes the
+        // event ranking list would show blanks, so it is pinned here.
+        let division = try XCTUnwrap(try detail().divisions.first)
+        for ranking in division.rankings.prefix(20) {
+            XCTAssertFalse(ranking.team.name.isEmpty)
+            XCTAssertTrue(ranking.team.name.contains(where: \.isNumber),
+                          "expected a team number, got \(ranking.team.name)")
+        }
+    }
+
+    func testVenueLineSkipsMissingParts() throws {
+        let response = try detail()
+        let line = response.event.venueLine
+        XCTAssertFalse(line.contains(", ,"))
+        XCTAssertFalse(line.hasPrefix(", "))
+    }
+
+    func testSkillsLeaderboardFoldsBothRunsPerTeam() throws {
+        let response = try detail()
+        let board = response.skillsLeaderboard
+        XCTAssertFalse(board.isEmpty)
+        // Two rows per team in the feed collapse to one row per team here.
+        XCTAssertLessThan(board.count, response.skills.count)
+        XCTAssertEqual(board.count, Set(board.map { $0.number }).count)
+        for leader in board {
+            XCTAssertEqual(leader.total, leader.driver + leader.programming)
+        }
+        for (a, b) in zip(board, board.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(a.total, b.total)
+        }
+    }
+
+}
+
+/// Stat leaders are computed on-device from two feeds, so the arithmetic and
+/// the qualification thresholds - not just decoding - are what these cover.
+final class StatLeaderTests: XCTestCase {
+    private func fixture(_ name: String) throws -> Data {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"),
+            "missing fixture \(name).json"
+        )
+        return try Data(contentsOf: url)
+    }
+
+    private func teams() throws -> [TeamRanking] {
+        try JSONDecoder().decode(RankingsResponse.self, from: fixture("rankings")).rankings
+    }
+
+    private func skills() throws -> [SkillsEntry] {
+        try JSONDecoder().decode(SkillsResponse.self, from: fixture("skills")).rankings
+    }
+
+    func testDecodesLiveSkillsResponse() throws {
+        let entries = try skills()
+        XCTAssertGreaterThan(entries.count, 100)
+        let leader = try XCTUnwrap(entries.first)
+        XCTAssertEqual(leader.skillsRank, 1)
+        XCTAssertEqual(leader.autoSkills + leader.driverSkills, leader.combinedSkills)
+    }
+
+    func testWinRateCountsTiesAsHalf() {
+        XCTAssertEqual(StatLeaders.winRate(record: "6\u{2013}2\u{2013}2", matches: 10), 70, accuracy: 0.001)
+        XCTAssertEqual(StatLeaders.winRate(record: "6-2-2", matches: 10), 70, accuracy: 0.001)
+        // A record the API stopped sending, or zero matches, must not divide by
+        // zero or crash the whole leaderboard.
+        XCTAssertEqual(StatLeaders.winRate(record: nil, matches: 10), 0)
+        XCTAssertEqual(StatLeaders.winRate(record: "6\u{2013}2\u{2013}2", matches: 0), 0)
+    }
+
+    func testScoresStayInsideZeroToOneHundred() throws {
+        for team in try teams() {
+            let picking = StatLeaders.pickingScore(team)
+            XCTAssertTrue((0...100).contains(picking), "picking \(picking) for \(team.number)")
+            let consistency = StatLeaders.consistencyScore(team)
+            XCTAssertTrue((0...100).contains(consistency), "consistency \(consistency) for \(team.number)")
+        }
+    }
+
+    func testEveryCategoryIsSortedBestFirst() throws {
+        let teams = try teams()
+        let skills = try skills()
+        for category in StatCategory.all {
+            let rows = StatLeaders.rank(category: category, teams: teams, skills: skills)
+            XCTAssertFalse(rows.isEmpty, "\(category.id) produced no rows")
+            for (a, b) in zip(rows, rows.dropFirst()) {
+                if category.lowerIsBetter {
+                    XCTAssertLessThanOrEqual(a.value, b.value, "\(category.id) out of order")
+                } else {
+                    XCTAssertGreaterThanOrEqual(a.value, b.value, "\(category.id) out of order")
+                }
+            }
+        }
+    }
+
+    func testMatchCategoriesEnforceTheirThresholds() throws {
+        let teams = try teams()
+        let skills = try skills()
+        let byNumber = Dictionary(teams.map { ($0.number, $0) }, uniquingKeysWith: { a, _ in a })
+
+        let offense = StatLeaders.rank(category: StatCategory.all[0], teams: teams, skills: skills)
+        for row in offense {
+            XCTAssertGreaterThanOrEqual(byNumber[row.number]?.matches ?? 0, 12)
+        }
+
+        let picking = StatLeaders.rank(category: StatCategory.all[2], teams: teams, skills: skills)
+        for row in picking {
+            let team = try XCTUnwrap(byNumber[row.number])
+            XCTAssertGreaterThanOrEqual(team.matches ?? 0, 36)
+            XCTAssertGreaterThanOrEqual(team.events, 4)
+        }
+        // The stricter threshold has to actually exclude teams, or it is not
+        // doing the job the copy claims.
+        XCTAssertLessThan(picking.count, offense.count)
+    }
+
+    func testCountryFilterNarrowsTheField() throws {
+        let teams = try teams()
+        let skills = try skills()
+        let category = StatCategory.all[0]
+        let all = StatLeaders.rank(category: category, teams: teams, skills: skills)
+        let country = try XCTUnwrap(StatLeaders.countries(category: category, teams: teams, skills: skills).first)
+        let filtered = StatLeaders.rank(category: category, teams: teams, skills: skills, country: country)
+        XCTAssertFalse(filtered.isEmpty)
+        XCTAssertLessThan(filtered.count, all.count)
+    }
+
+    func testSkillsRowsDoNotOfferAProfile() throws {
+        let rows = StatLeaders.rank(category: StatCategory.all[6], teams: try teams(), skills: try skills())
+        XCTAssertFalse(rows.contains { $0.opensProfile })
+        XCTAssertTrue(StatLeaders.rank(category: StatCategory.all[0], teams: try teams(), skills: try skills()).allSatisfy(\.opensProfile))
+    }
+}
