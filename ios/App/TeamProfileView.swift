@@ -15,20 +15,33 @@ struct TeamProfileView: View {
     @State private var model = TeamProfileModel()
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
-                header
-                if let profile = model.profile {
-                    seasonBand(profile)
-                    if profile.ratingHistory.count > 1 { chart(profile) }
-                } else if let message = model.error {
-                    Text(message).font(.footnote).foregroundStyle(.secondary)
-                } else {
-                    ProgressView().padding(.vertical, 20)
+        // The viewport height is published to the reveal modifier, which needs
+        // to know what "scrolled into view" means.
+        GeometryReader { viewport in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 26) {
+                    header
+                    // The fade is scoped to the part that actually changes. On
+                    // the whole VStack it also covered the signature, and an
+                    // implicit animation there replaced the pen's own pending
+                    // stroke animations: if the profile arrived mid-write the
+                    // writing stopped dead and the number stayed half drawn.
+                    VStack(alignment: .leading, spacing: 26) {
+                        if let profile = model.profile {
+                            seasonBand(profile).reveal()
+                            if profile.ratingHistory.count > 1 { chart(profile).reveal() }
+                        } else if let message = model.error {
+                            Text(message).font(.footnote).foregroundStyle(.secondary)
+                        } else {
+                            ProgressView().padding(.vertical, 20)
+                        }
+                    }
+                    .animation(.easeOut(duration: 0.45), value: model.profile == nil)
                 }
+                .padding(20)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .environment(\.revealViewportHeight, viewport.size.height)
         }
         .background(theme.page)
         .navigationTitle(number)
@@ -112,20 +125,8 @@ struct TeamProfileView: View {
     private func chart(_ profile: TeamProfileResponse) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Tournament rating movement").font(.title3.weight(.semibold))
-            Chart(profile.ratingHistory) { point in
-                LineMark(
-                    x: .value("Event", point.date ?? .distantPast),
-                    y: .value("Rating", point.rating)
-                )
-                .foregroundStyle(theme.accent)
-                .interpolationMethod(.monotone)
-                PointMark(
-                    x: .value("Event", point.date ?? .distantPast),
-                    y: .value("Rating", point.rating)
-                )
-                .foregroundStyle(point.change >= 0 ? .green : .red)
-            }
-            .frame(height: 220)
+            GrowingRatingChart(history: profile.ratingHistory, accent: theme.accent)
+                .frame(height: 220)
             Text("The published ranking uses a rolling sample of the season's most recent events, so this line can run ahead of the rating in the table.")
                 .font(.caption2).foregroundStyle(.secondary)
         }

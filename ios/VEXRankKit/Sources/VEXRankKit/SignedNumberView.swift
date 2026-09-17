@@ -8,6 +8,13 @@ import SwiftUI
 /// the direct equivalent and is better behaved: at 0 it draws genuinely
 /// nothing, whereas a zero-length dash with a round cap paints a dot - the
 /// defect that left a mark on the Y before it was written.
+///
+/// Each stroke is its own `Shape` with the trim as its `animatableData`. The
+/// first version drew all the strokes in one `Canvas`, which looked right but
+/// never animated: a Canvas re-renders when state changes, but SwiftUI only
+/// interpolates values it can see as animatable attributes, and state read
+/// inside the drawing closure is not one - so every stroke jumped from 0 to 1
+/// on the first frame and the number simply appeared.
 @available(iOS 17.0, macOS 14.0, *)
 public struct SignedNumberView: View {
     private let text: String
@@ -15,22 +22,44 @@ public struct SignedNumberView: View {
     private let accent: Color
     private let ink: Color
 
-    /// Ordered strokes across the whole string, each tagged with the index of
-    /// the character it belongs to.
-    private let strokes: [(character: Int, path: String)]
+    /// Stroke width in glyph units. The glyph box is 100 units tall.
+    private static let penWidth: CGFloat = 7
+
+    /// Ordered strokes across the whole string, already positioned at their
+    /// character's offset, each tagged with the index of that character.
+    ///
+    /// Parsed once here rather than inside the shapes: the strokes are redrawn
+    /// on every frame of the animation, and re-parsing a path string per stroke
+    /// per frame is work that only ever produces the same answer.
+    private let strokes: [(character: Int, path: Path, length: Double)]
+
+    /// The inked bounds in glyph units, including the half stroke width that a
+    /// round cap adds beyond each end of the path. Measured rather than assumed
+    /// to be `count * advance`: a glyph can reach past its own advance (X does),
+    /// and the caps add to that, which is what pushed the last character off the
+    /// right edge of the screen.
+    private let bounds: CGRect
 
     public init(text: String, accentFrom: Int? = nil, ink: Color = .primary, accent: Color = .red) {
         self.text = text
         self.accentFrom = accentFrom
         self.ink = ink
         self.accent = accent
-        var collected: [(Int, String)] = []
+
+        var collected: [(character: Int, path: Path, length: Double)] = []
         for (index, character) in Array(text).enumerated() {
+            let offset = CGAffineTransform(translationX: CGFloat(Double(index) * StrokeGlyphs.advance), y: 0)
             for stroke in StrokeGlyphs.strokes(for: character) ?? [] {
-                collected.append((index, stroke))
+                let parsed = StrokePathParser.parse(stroke)
+                collected.append((index, parsed.path.applying(offset), parsed.approximateLength))
             }
         }
-        self.strokes = collected.map { (character: $0.0, path: $0.1) }
+        self.strokes = collected
+
+        let inked = collected.reduce(CGRect.null) { $0.union($1.path.boundingRect) }
+        self.bounds = inked.isNull
+            ? CGRect(x: 0, y: 0, width: 1, height: StrokeGlyphs.height)
+            : inked.insetBy(dx: -Self.penWidth / 2, dy: -Self.penWidth / 2)
     }
 
     @State private var progress: [Double] = []
@@ -43,23 +72,28 @@ public struct SignedNumberView: View {
             // Falls back to text rather than rendering a gap.
             Text(text).font(.system(size: 44, weight: .semibold, design: .rounded))
         } else {
-            Canvas { context, size in
-                let unit = size.height / StrokeGlyphs.height
-                for (index, stroke) in strokes.enumerated() {
-                    let drawn = progress.indices.contains(index) ? progress[index] : 1
-                    guard drawn > 0 else { continue }
-                    let transform = CGAffineTransform(translationX: CGFloat(Double(stroke.character) * StrokeGlyphs.advance), y: 0)
-                        .concatenating(CGAffineTransform(scaleX: unit, y: unit))
-                    let placed = StrokePathParser.parse(stroke.path).path.applying(transform)
-                    let colour = (accentFrom.map { stroke.character >= $0 } ?? false) ? accent : ink
-                    context.stroke(
-                        placed.trimmedPath(from: 0, to: drawn),
-                        with: .color(colour),
-                        style: StrokeStyle(lineWidth: 7 * unit, lineCap: .round, lineJoin: .round)
-                    )
+            GeometryReader { geometry in
+                // Fits the inked bounds inside whatever box the caller gives us.
+                // `aspectRatio` used to do this, but it sizes from the child's
+                // ideal size and a GeometryReader has none, so it stopped
+                // constraining anything once the Canvas was replaced.
+                let unit = min(geometry.size.height / bounds.height,
+                               geometry.size.width / bounds.width)
+                ZStack(alignment: .topLeading) {
+                    ForEach(strokes.indices, id: \.self) { index in
+                        StrokeShape(
+                            stroke: strokes[index].path,
+                            origin: bounds.origin,
+                            unit: unit,
+                            progress: progress.indices.contains(index) ? progress[index] : 1
+                        )
+                        .stroke(
+                            (accentFrom.map { strokes[index].character >= $0 } ?? false) ? accent : ink,
+                            style: StrokeStyle(lineWidth: Self.penWidth * unit, lineCap: .round, lineJoin: .round)
+                        )
+                    }
                 }
             }
-            .aspectRatio(CGFloat(Double(characterCount) * StrokeGlyphs.advance / StrokeGlyphs.height), contentMode: .fit)
             .accessibilityHidden(true)
             .onAppear(perform: write)
         }
@@ -86,13 +120,37 @@ public struct SignedNumberView: View {
         for (index, stroke) in strokes.enumerated() {
             let through = Double(stroke.character) / lastCharacter
             let drag = 1 + finalDrag * pow(through, 1.7)
-            let length = StrokePathParser.parse(stroke.path).approximateLength
+            let length = stroke.length
             let duration = max(0.12, length * penSpeed * drag)
             withAnimation(.timingCurve(0.32, 0, 0.35, 1, duration: duration).delay(delay)) {
                 progress[index] = 1
             }
             delay += duration + penLift * drag
         }
+    }
+}
+
+/// One pen stroke, trimmed to `progress`. Being a `Shape` is what makes it
+/// animate: `animatableData` is interpolated frame by frame and `path(in:)` is
+/// re-evaluated for each value.
+@available(iOS 17.0, macOS 14.0, *)
+private struct StrokeShape: Shape {
+    let stroke: Path
+    let origin: CGPoint
+    let unit: CGFloat
+    var progress: Double
+
+    var animatableData: Double {
+        get { progress }
+        set { progress = newValue }
+    }
+
+    func path(in rect: CGRect) -> Path {
+        let drawn = min(1, max(0, progress))
+        guard drawn > 0 else { return Path() }
+        let transform = CGAffineTransform(translationX: -origin.x, y: -origin.y)
+            .concatenating(CGAffineTransform(scaleX: unit, y: unit))
+        return stroke.applying(transform).trimmedPath(from: 0, to: drawn)
     }
 }
 #endif

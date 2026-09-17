@@ -17,6 +17,7 @@ struct StatLeadersView: View {
             Divider()
             content
         }
+        .animation(.easeOut(duration: 0.35), value: model.state.isLoaded)
         .background(theme.page)
         .task { await model.load() }
     }
@@ -149,6 +150,10 @@ struct StatLeadersView: View {
 @Observable
 final class StatLeadersModel {
     enum State {
+        /// Drives the fade from spinner to content; the cases themselves carry
+        /// payloads that are not worth making Equatable just for this.
+        var isLoaded: Bool { if case .loaded = self { return true }; return false }
+
         case loading
         case loaded
         case failed(String)

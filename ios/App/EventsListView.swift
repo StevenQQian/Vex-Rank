@@ -27,6 +27,7 @@ struct EventsListView: View {
 
             content
         }
+        .animation(.easeOut(duration: 0.35), value: model.state.isLoaded)
         .background(theme.page)
         .searchable(text: $query, prompt: "Search events by name or place")
         .task {
@@ -119,7 +120,11 @@ struct EventsListView: View {
 @available(iOS 17.0, *)
 @Observable
 final class EventsModel {
-    enum State { case loading, loaded([VEXEvent]), failed(String) }
+    enum State {
+        case loading, loaded([VEXEvent]), failed(String)
+        /// Drives the fade from spinner to content.
+        var isLoaded: Bool { if case .loaded = self { return true }; return false }
+    }
     private(set) var state: State = .loading
     private let api = VEXRankAPI()
 

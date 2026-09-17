@@ -34,6 +34,7 @@ struct RankingsListView: View {
                 }
             }
         }
+        .animation(.easeOut(duration: 0.35), value: model.state.isLoaded)
         .background(theme.page)
         .searchable(text: $query, prompt: "Search team number or name")
         .task { await model.load() }
@@ -93,6 +94,10 @@ struct RankingsListView: View {
 @Observable
 final class RankingsModel {
     enum State {
+        /// Drives the fade from spinner to content; the cases themselves carry
+        /// payloads that are not worth making Equatable just for this.
+        var isLoaded: Bool { if case .loaded = self { return true }; return false }
+
         case loading
         case loaded([TeamRanking])
         case failed(String)

@@ -415,3 +415,77 @@ final class StatLeaderTests: XCTestCase {
         XCTAssertTrue(StatLeaders.rank(category: StatCategory.all[0], teams: try teams(), skills: try skills()).allSatisfy(\.opensProfile))
     }
 }
+
+/// The growing rating curve is the animation's data, so its arithmetic is
+/// testable even though the drawing is not.
+final class RatingCurveTests: XCTestCase {
+    private func fixture(_ name: String) throws -> Data {
+        let url = try XCTUnwrap(
+            Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"),
+            "missing fixture \(name).json"
+        )
+        return try Data(contentsOf: url)
+    }
+
+    private func history() throws -> [RatingPoint] {
+        try JSONDecoder().decode(TeamProfileResponse.self, from: fixture("team")).ratingHistory
+    }
+
+    func testStartsFromNothingAndEndsComplete() throws {
+        let history = try history()
+        XCTAssertTrue(RatingCurve.growing(history, progress: 0).isEmpty,
+                      "the curve must grow from none, not from a stray first point")
+        let full = RatingCurve.growing(history, progress: 1)
+        XCTAssertEqual(full.count, history.compactMap(\.date).count)
+        XCTAssertTrue(full.allSatisfy(\.isEvent))
+    }
+
+    func testGrowsMonotonicallyAndNeverOvershoots() throws {
+        let history = try history()
+        var previous = 0
+        for step in stride(from: 0.0, through: 1.0, by: 0.05) {
+            let samples = RatingCurve.growing(history, progress: step)
+            XCTAssertGreaterThanOrEqual(samples.count, previous)
+            previous = samples.count
+            // Out-of-range progress must clamp rather than trap on a bad index.
+            XCTAssertLessThanOrEqual(samples.count, history.count)
+        }
+        XCTAssertEqual(RatingCurve.growing(history, progress: 4).count,
+                       RatingCurve.growing(history, progress: 1).count)
+        XCTAssertTrue(RatingCurve.growing(history, progress: -3).isEmpty)
+    }
+
+    func testMovingTipIsInterpolatedAndNotMarkedAnEvent() throws {
+        let history = try history()
+        let dated = history.compactMap { point in point.date.map { ($0, Double(point.rating)) } }
+            .sorted { $0.0 < $1.0 }
+        // Halfway along the first segment of the series.
+        let step = 0.5 / Double(dated.count - 1)
+        let samples = RatingCurve.growing(history, progress: step)
+        let tip = try XCTUnwrap(samples.last)
+        XCTAssertFalse(tip.isEvent)
+        XCTAssertEqual(tip.rating, (dated[0].1 + dated[1].1) / 2, accuracy: 0.001)
+        XCTAssertTrue(samples.dropLast().allSatisfy(\.isEvent))
+    }
+
+    func testDomainsCoverTheWholeSeriesSoAxesDoNotMove() throws {
+        let history = try history()
+        let ratings = history.map { Double($0.rating) }
+        let domain = RatingCurve.ratingDomain(history)
+        XCTAssertLessThan(domain.lowerBound, ratings.min()!)
+        XCTAssertGreaterThan(domain.upperBound, ratings.max()!)
+
+        let dates = try XCTUnwrap(RatingCurve.dateDomain(history))
+        XCTAssertLessThanOrEqual(dates.lowerBound, history.compactMap(\.date).min()!)
+        XCTAssertGreaterThanOrEqual(dates.upperBound, history.compactMap(\.date).max()!)
+    }
+
+    func testEasingIsClampedAndEndsWhereItShould() {
+        XCTAssertEqual(RatingCurve.eased(0), 0, accuracy: 0.0001)
+        XCTAssertEqual(RatingCurve.eased(1), 1, accuracy: 0.0001)
+        XCTAssertEqual(RatingCurve.eased(9), 1, accuracy: 0.0001)
+        XCTAssertEqual(RatingCurve.eased(-9), 0, accuracy: 0.0001)
+        // Ease-out: more than half the distance covered in the first half.
+        XCTAssertGreaterThan(RatingCurve.eased(0.5), 0.5)
+    }
+}
