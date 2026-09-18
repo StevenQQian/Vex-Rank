@@ -37,21 +37,43 @@ struct GrowingRatingChart: View {
 
     private func chart(progress: Double) -> some View {
         let samples = RatingCurve.growing(history, progress: progress)
+        let labels = RatingCurve.axisLabels(history)
         return Chart {
             ForEach(samples) { sample in
-                LineMark(x: .value("Event", sample.date), y: .value("Rating", sample.rating))
+                LineMark(x: .value("Event", sample.x), y: .value("Rating", sample.rating))
                     .foregroundStyle(accent)
+                    .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
             }
             // Only settled events get a dot; the moving tip is not an event.
+            // Green for a gain and rose for a loss, as on the web.
             ForEach(samples.filter(\.isEvent)) { sample in
-                PointMark(x: .value("Event", sample.date), y: .value("Rating", sample.rating))
-                    .foregroundStyle(accent)
-                    .symbolSize(28)
+                PointMark(x: .value("Event", sample.x), y: .value("Rating", sample.rating))
+                    .foregroundStyle(sample.change >= 0 ? Color(.sRGB, red: 0.20, green: 0.83, blue: 0.60)
+                                                        : Color(.sRGB, red: 0.98, green: 0.44, blue: 0.52))
+                    .symbolSize(52)
             }
         }
         .chartYScale(domain: RatingCurve.ratingDomain(history))
-        .chartXScale(domain: RatingCurve.dateDomain(history) ?? Date()...Date())
+        .chartXScale(domain: RatingCurve.eventDomain(history))
+        // Horizontal rules only, matching the web's `vertical={false}` grid.
+        .chartXAxis {
+            AxisMarks(values: labels.map(\.x)) { mark in
+                AxisValueLabel {
+                    // fixedSize, or Charts squeezes the last label - which sits
+                    // nearest the edge - down to a single character.
+                    Text(labels.first { $0.x == mark.as(Double.self) }?.label ?? "")
+                        .font(.caption2)
+                        .fixedSize()
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks { _ in
+                AxisGridLine().foregroundStyle(.white.opacity(0.08))
+                AxisValueLabel().font(.caption2)
+            }
+        }
     }
 
     private var trigger: some View {

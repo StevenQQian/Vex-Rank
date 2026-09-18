@@ -10,8 +10,18 @@ import Foundation
 /// there from the first frame while the line grows into them.
 public struct CurveSample: Identifiable, Sendable, Hashable {
     public let id: Int
+    /// Position along the axis, in events rather than in time.
+    ///
+    /// The web plots the season on a categorical axis, so every event gets the
+    /// same width whatever the gap before it. Plotting against the date instead
+    /// bunches a cluster of events into a few pixels and draws the rating jump
+    /// between them as a near-vertical spike, which is what made the iOS line
+    /// look jagged beside the web's.
+    public let x: Double
     public let date: Date
     public let rating: Double
+    /// Points the rating moved at this event; the dot is coloured by its sign.
+    public let change: Int
     /// False for the moving tip, which sits between two events and is not one.
     public let isEvent: Bool
 }
@@ -21,12 +31,11 @@ public enum RatingCurve {
     /// cut part-way so the line advances smoothly instead of jumping a whole
     /// event at a time.
     public static func growing(_ history: [RatingPoint], progress: Double) -> [CurveSample] {
-        let dated = history
-            .compactMap { point in point.date.map { (date: $0, rating: Double(point.rating)) } }
-            .sorted { $0.date < $1.date }
+        let dated = ordered(history)
         guard dated.count > 1 else {
             return dated.enumerated().map {
-                CurveSample(id: $0.offset, date: $0.element.date, rating: $0.element.rating, isEvent: true)
+                CurveSample(id: $0.offset, x: Double($0.offset), date: $0.element.date,
+                            rating: $0.element.rating, change: $0.element.change, isEvent: true)
             }
         }
 
@@ -36,7 +45,8 @@ public enum RatingCurve {
         let position = clamped * Double(dated.count - 1)
         let whole = min(dated.count - 1, Int(position))
         var samples = dated.prefix(whole + 1).enumerated().map {
-            CurveSample(id: $0.offset, date: $0.element.date, rating: $0.element.rating, isEvent: true)
+            CurveSample(id: $0.offset, x: Double($0.offset), date: $0.element.date,
+                        rating: $0.element.rating, change: $0.element.change, isEvent: true)
         }
 
         let fraction = position - Double(whole)
@@ -45,8 +55,10 @@ public enum RatingCurve {
             let to = dated[whole + 1]
             samples.append(CurveSample(
                 id: whole + 1,
+                x: Double(whole) + fraction,
                 date: from.date.addingTimeInterval(to.date.timeIntervalSince(from.date) * fraction),
                 rating: from.rating + (to.rating - from.rating) * fraction,
+                change: to.change,
                 isEvent: false
             ))
         }
@@ -63,12 +75,38 @@ public enum RatingCurve {
         return (low - padding)...(high + padding)
     }
 
-    public static func dateDomain(_ history: [RatingPoint]) -> ClosedRange<Date>? {
-        let dates = history.compactMap(\.date).sorted()
-        guard let first = dates.first, let last = dates.last else { return nil }
-        // A single-event season has no span; give it one so the axis is valid.
-        guard first < last else { return first.addingTimeInterval(-86400)...last.addingTimeInterval(86400) }
-        return first...last
+    /// Events in date order, which is the order the axis positions follow.
+    public static func ordered(_ history: [RatingPoint]) -> [(date: Date, rating: Double, change: Int)] {
+        history
+            .compactMap { point in point.date.map { (date: $0, rating: Double(point.rating), change: point.change) } }
+            .sorted { $0.date < $1.date }
+    }
+
+    /// The x domain, in event positions. Padded by a fifth of a step so the
+    /// first and last dots are not cut in half by the edge of the plot.
+    public static func eventDomain(_ history: [RatingPoint]) -> ClosedRange<Double> {
+        let count = ordered(history).count
+        guard count > 1 else { return -0.5...0.5 }
+        return -0.2...(Double(count - 1) + 0.2)
+    }
+
+    /// Labels for a handful of evenly spaced events, so the axis stays legible
+    /// on a phone rather than printing every date.
+    public static func axisLabels(_ history: [RatingPoint], count target: Int = 3) -> [(x: Double, label: String)] {
+        let events = ordered(history)
+        guard !events.isEmpty else { return [] }
+        // The profile carries every season, not one, so a month-and-day label
+        // reads as out of order the moment the series crosses a new year
+        // ("Jul 1, Nov 15, Sep 12"). The year goes in when it has to.
+        let calendar = Calendar.current
+        let spansYears = calendar.component(.year, from: events.first!.date)
+            != calendar.component(.year, from: events.last!.date)
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate(spansYears ? "MMMyyyy" : "MMMd")
+        let step = max(1, Int((Double(events.count) / Double(max(1, target))).rounded(.up)))
+        return stride(from: 0, to: events.count, by: step).map {
+            (x: Double($0), label: formatter.string(from: events[$0].date))
+        }
     }
 
     /// Ease-out: the curve arrives quickly and settles, which reads as drawn

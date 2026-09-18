@@ -475,9 +475,53 @@ final class RatingCurveTests: XCTestCase {
         XCTAssertLessThan(domain.lowerBound, ratings.min()!)
         XCTAssertGreaterThan(domain.upperBound, ratings.max()!)
 
-        let dates = try XCTUnwrap(RatingCurve.dateDomain(history))
-        XCTAssertLessThanOrEqual(dates.lowerBound, history.compactMap(\.date).min()!)
-        XCTAssertGreaterThanOrEqual(dates.upperBound, history.compactMap(\.date).max()!)
+        // The x domain is in event positions, and is padded so the first and
+        // last dots are not cut in half by the edge of the plot.
+        let events = RatingCurve.ordered(history)
+        let x = RatingCurve.eventDomain(history)
+        XCTAssertLessThan(x.lowerBound, 0)
+        XCTAssertGreaterThan(x.upperBound, Double(events.count - 1))
+    }
+
+    func testEventsAreSpacedEvenlyRatherThanByDate() throws {
+        let history = try history()
+        let samples = RatingCurve.growing(history, progress: 1)
+        // Equal spacing is what keeps a cluster of events from being drawn as
+        // a vertical spike, which is how the date-scaled version looked.
+        for (index, sample) in samples.enumerated() {
+            XCTAssertEqual(sample.x, Double(index), accuracy: 0.0001)
+        }
+        XCTAssertEqual(samples.map(\.change), RatingCurve.ordered(history).map(\.change))
+    }
+
+    func testAxisLabelsStayInRangeAndReadable() throws {
+        let history = try history()
+        let labels = RatingCurve.axisLabels(history)
+        XCTAssertFalse(labels.isEmpty)
+        XCTAssertLessThanOrEqual(labels.count, RatingCurve.ordered(history).count)
+        for label in labels {
+            XCTAssertGreaterThanOrEqual(label.x, 0)
+            XCTAssertLessThan(label.x, Double(RatingCurve.ordered(history).count))
+            XCTAssertFalse(label.label.isEmpty)
+        }
+        // Strictly increasing, so two labels never land on the same tick.
+        XCTAssertEqual(labels.map(\.x), labels.map(\.x).sorted())
+        XCTAssertEqual(Set(labels.map(\.x)).count, labels.count)
+    }
+
+    func testLabelsCarryTheYearWhenTheSeriesCrossesOne() throws {
+        let events = RatingCurve.ordered(try history())
+        let calendar = Calendar.current
+        let years = Set(events.map { calendar.component(.year, from: $0.date) })
+        let labels = RatingCurve.axisLabels(try history())
+        guard years.count > 1 else {
+            throw XCTSkip("this fixture's history sits inside one calendar year")
+        }
+        // Otherwise the labels read as out of order: "Jul 1, Nov 15, Sep 12".
+        for label in labels {
+            XCTAssertTrue(years.contains { label.label.contains(String($0)) },
+                          "expected a year in \(label.label)")
+        }
     }
 
     func testEasingIsClampedAndEndsWhereItShould() {
