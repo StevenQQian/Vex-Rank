@@ -53,6 +53,12 @@ struct TeamEventMatchesView: View {
                                     stat("DPR", String(format: "%.1f", s.dpr))
                                     stat("CCWM", String(format: "%.1f", s.ccwm))
                                 }
+                                if standing.statsAreProvisional {
+                                    // These move a lot early on; say so rather
+                                    // than presenting them as settled.
+                                    Text("Provisional - few matches played so far")
+                                        .font(.caption2).foregroundStyle(.tertiary)
+                                }
                             }
                         } else {
                             // Registered but not seeded yet.
@@ -85,8 +91,19 @@ struct TeamEventMatchesView: View {
             }
 
             if !model.played.isEmpty {
-                Section("Played") {
+                Section {
                     ForEach(model.played) { row($0) }
+                } header: {
+                    Text("Played")
+                } footer: {
+                    if let check = model.check, !check.agrees {
+                        // Says why the two disagree instead of letting the
+                        // reader find a "LOST" above a winning record.
+                        Text(check.unexplainedWins > 0
+                             ? "The event credits \(check.officialSummary). \(check.unexplainedWins == 1 ? "One result does" : "\(check.unexplainedWins) results do") not follow the scores, which is what a disqualification looks like - the marks below are from the scores alone."
+                             : "The event credits \(check.officialSummary), which does not follow the scores below.")
+                            .font(.caption2)
+                    }
                 }
                 .listRowBackground(theme.surface)
             }
@@ -159,9 +176,15 @@ struct TeamEventMatchesView: View {
                 Text(match.name).font(.subheadline.weight(.medium))
                 Spacer(minLength: 8)
                 if match.isPlayed {
-                    Text(outcomeLabel(match.outcome))
+                    // Marked as "on score" when the standings disagree with
+                    // what the scores add up to, because then one of these
+                    // labels is wrong and nothing in the data says which.
+                    Text(model.check?.agrees == false
+                         ? "\(outcomeLabel(match.outcome)) ON SCORE"
+                         : outcomeLabel(match.outcome))
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(outcomeColour(match.outcome))
+                        .foregroundStyle(model.check?.agrees == false
+                                         ? .secondary : outcomeColour(match.outcome))
                 } else if let time = match.scheduled {
                     Text(time.formatted(date: .omitted, time: .shortened))
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
@@ -225,6 +248,7 @@ final class TeamEventMatchesModel {
     private(set) var record: TeamEventRecord?
     private(set) var standing: EventStanding?
     private(set) var momentum: [MomentumPoint] = []
+    private(set) var check: RecordCheck?
     private(set) var error: String?
     private let api = VEXRankAPI()
 
@@ -240,6 +264,13 @@ final class TeamEventMatchesModel {
             record = TeamEventRecord(matches: all)
             standing = detail.standing(for: ref.team)
             momentum = TeamMomentum.points(from: all)
+            check = standing.map { RecordCheck(standing: $0, matches: all) }
+            // The standings are the authority for the record itself.
+            if let standing {
+                record = TeamEventRecord(wins: standing.wins, losses: standing.losses,
+                                         ties: standing.ties,
+                                         remaining: all.filter { !$0.isPlayed }.count)
+            }
         } catch {
             self.error = error.localizedDescription
         }

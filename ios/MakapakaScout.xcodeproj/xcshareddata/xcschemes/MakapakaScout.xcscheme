@@ -6,9 +6,9 @@
             <BuildableReference
                BuildableIdentifier = "primary"
                BlueprintIdentifier = "F4CE289E12215AE7B0E326C7"
-               BuildableName = "VEXRank.app"
-               BlueprintName = "VEXRank"
-               ReferencedContainer = "container:VEXRank.xcodeproj">
+               BuildableName = "MakapakaScout.app"
+               BlueprintName = "MakapakaScout"
+               ReferencedContainer = "container:MakapakaScout.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
       </BuildActionEntries>
@@ -18,9 +18,9 @@
          <BuildableReference
             BuildableIdentifier = "primary"
             BlueprintIdentifier = "F4CE289E12215AE7B0E326C7"
-            BuildableName = "VEXRank.app"
-            BlueprintName = "VEXRank"
-            ReferencedContainer = "container:VEXRank.xcodeproj">
+            BuildableName = "MakapakaScout.app"
+            BlueprintName = "MakapakaScout"
+            ReferencedContainer = "container:MakapakaScout.xcodeproj">
          </BuildableReference>
       </BuildableProductRunnable>
    </LaunchAction>

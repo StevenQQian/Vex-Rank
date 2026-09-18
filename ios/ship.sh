@@ -1,18 +1,21 @@
 #!/bin/bash
-# Build VEXRank and install it on the connected iPhone.
+# Build Makapaka Scout and install it on the connected iPhone.
 #
 #   ./ship.sh path/to/logo.png      generate the icon, then build and install
 #   ./ship.sh                       build and install with the icon as it is
 #
 # The simulator build (build-and-run.sh) uses swiftc directly, which is enough
 # to run but cannot be signed. A phone needs a signed bundle, which needs a
-# real project, so this goes through VEXRank.xcworkspace instead.
+# real project, so this goes through MakapakaScout.xcworkspace instead.
 set -euo pipefail
 cd "$(dirname "$0")"
 
 if [ $# -ge 1 ]; then
   echo "==> icon"
-  swift Tools/make-icon.swift "$1" App/Assets.xcassets/AppIcon.appiconset/icon-1024.png 1024
+  # Extra arguments pass through, so a background can be forced:
+  #   ./ship.sh logo.png --background 2B2B2B
+  LOGO="$1"; shift
+  swift Tools/make-icon.swift "$LOGO" App/Assets.xcassets/AppIcon.appiconset/icon-1024.png 1024 "$@"
 fi
 
 if [ ! -f App/Assets.xcassets/AppIcon.appiconset/icon-1024.png ]; then
@@ -31,11 +34,11 @@ fi
 echo "==> device $DEVICE"
 
 echo "==> build"
-xcodebuild -workspace VEXRank.xcworkspace -scheme VEXRank -configuration Release \
+xcodebuild -workspace MakapakaScout.xcworkspace -scheme MakapakaScout -configuration Release \
   -destination "generic/platform=iOS" -allowProvisioningUpdates \
   -derivedDataPath .build/device build
 
-APP=.build/device/Build/Products/Release-iphoneos/VEXRank.app
+APP=.build/device/Build/Products/Release-iphoneos/MakapakaScout.app
 echo "==> install"
 xcrun devicectl device install app --device "$DEVICE" "$APP"
-echo "==> installed. Open VEXRank on the phone."
+echo "==> installed. Open Makapaka Scout on the phone."

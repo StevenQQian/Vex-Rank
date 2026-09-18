@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate VEXRank.xcodeproj.
+"""Generate MakapakaScout.xcodeproj.
 
 The simulator build uses swiftc directly, which is enough to run but cannot
 be code signed or installed on a phone. Signing needs a real project so that
@@ -10,7 +10,7 @@ left to drift.
 import os, re, uuid, pathlib
 
 ROOT = pathlib.Path(__file__).parent
-PROJECT = ROOT / "VEXRank.xcodeproj"
+PROJECT = ROOT / "MakapakaScout.xcodeproj"
 BUNDLE_ID = "com.vexrank.app"
 TEAM = "F6CMB42387"
 
@@ -56,13 +56,13 @@ SETTINGS_TARGET = f'''
 \t\t\t\tCURRENT_PROJECT_VERSION = 1;
 \t\t\t\tDEVELOPMENT_TEAM = {TEAM};
 \t\t\t\tGENERATE_INFOPLIST_FILE = YES;
-\t\t\t\tINFOPLIST_KEY_CFBundleDisplayName = VEXRank;
-\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;
+\t\t\t\tINFOPLIST_KEY_CFBundleDisplayName = "Makapaka Scout";
+\t\t\t\tINFOPLIST_KEY_CFBundleName = "Makapaka Scout";\n\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;
 \t\t\t\tINFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 \t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 17.0;
 \t\t\t\tMARKETING_VERSION = 1.0;
 \t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = {BUNDLE_ID};
-\t\t\t\tPRODUCT_NAME = VEXRank;
+\t\t\t\tPRODUCT_NAME = MakapakaScout;
 \t\t\t\tSWIFT_VERSION = 5.0;
 \t\t\t\tTARGETED_DEVICE_FAMILY = 1;
 '''
@@ -80,7 +80,7 @@ pbx = f'''// !$*UTF8*$!
 
 /* Begin PBXFileReference section */
 {chr(10).join(file_refs)}
-\t\t{ids["product"]} /* VEXRank.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VEXRank.app; sourceTree = BUILT_PRODUCTS_DIR; }};
+\t\t{ids["product"]} /* MakapakaScout.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MakapakaScout.app; sourceTree = BUILT_PRODUCTS_DIR; }};
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -98,22 +98,22 @@ pbx = f'''// !$*UTF8*$!
 \t\t}};
 \t\t{ids["productsGroup"]} /* Products */ = {{
 \t\t\tisa = PBXGroup;
-\t\t\tchildren = ( {ids["product"]} /* VEXRank.app */, );
+\t\t\tchildren = ( {ids["product"]} /* MakapakaScout.app */, );
 \t\t\tname = Products;
 \t\t\tsourceTree = "<group>";
 \t\t}};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-\t\t{ids["target"]} /* VEXRank */ = {{
+\t\t{ids["target"]} /* MakapakaScout */ = {{
 \t\t\tisa = PBXNativeTarget;
 \t\t\tbuildConfigurationList = {ids["cfgListTarget"]};
 \t\t\tbuildPhases = ( {ids["sources"]}, {ids["frameworks"]}, {ids["resources"]}, );
 \t\t\tbuildRules = ();
 \t\t\tdependencies = ();
-\t\t\tname = VEXRank;
-\t\t\tproductName = VEXRank;
-\t\t\tproductReference = {ids["product"]} /* VEXRank.app */;
+\t\t\tname = MakapakaScout;
+\t\t\tproductName = MakapakaScout;
+\t\t\tproductReference = {ids["product"]} /* MakapakaScout.app */;
 \t\t\tpackageProductDependencies = ( {ids["productDep"]} /* VEXRankKit */, );\n\t\t\tproductType = "com.apple.product-type.application";
 \t\t}};
 /* End PBXNativeTarget section */
@@ -136,7 +136,7 @@ pbx = f'''// !$*UTF8*$!
 \t\t\tproductRefGroup = {ids["productsGroup"]};
 \t\t\tpackageReferences = ( {ids["packageRef"]} /* XCLocalSwiftPackageReference "VEXRankKit" */, );\n\t\t\tprojectDirPath = "";
 \t\t\tprojectRoot = "";
-\t\t\ttargets = ( {ids["target"]} /* VEXRank */, );
+\t\t\ttargets = ( {ids["target"]} /* MakapakaScout */, );
 \t\t}};
 /* End PBXProject section */
 

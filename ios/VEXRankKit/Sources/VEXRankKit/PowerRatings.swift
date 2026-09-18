@@ -1,6 +1,20 @@
 import Foundation
 
 /// A team's contribution ratings at one event.
+/// The fitted ratings for a division, and how much play stands behind them.
+public struct PowerRatings: Sendable {
+    public let stats: [String: TeamEventStats]
+    /// Average number of matches each team has been seen in.
+    public let appearances: Double
+
+    /// Fewer than four appearances each. The values are shrunk toward zero to
+    /// stay meaningful, but they will still move a lot as the event goes on.
+    public var isProvisional: Bool { appearances < 4 }
+    public var isEmpty: Bool { stats.isEmpty }
+
+    public subscript(team: String) -> TeamEventStats? { stats[team.uppercased()] }
+}
+
 public struct TeamEventStats: Sendable, Hashable {
     /// Offensive Power Rating: the points this team is estimated to add to
     /// whichever alliance it is on.
@@ -26,9 +40,9 @@ extension Division {
     /// at all; `b` holds each team's total alliance score. Elimination matches
     /// are excluded, as they are everywhere else - alliances there are chosen
     /// rather than drawn, so they say nothing about a team on its own.
-    public func powerRatings() -> [String: TeamEventStats] {
+    public func powerRatings() -> PowerRatings {
         let played = qualification.filter(\.isPlayed)
-        guard !played.isEmpty else { return [:] }
+        guard played.count >= 3 else { return PowerRatings(stats: [:], appearances: 0) }
 
         // Each match contributes twice: once per alliance.
         var sides: [(teams: [String], scored: Double, conceded: Double)] = []
@@ -41,20 +55,10 @@ extension Division {
             sides.append((redTeams, Double(redScore), Double(blueScore)))
             sides.append((blueTeams, Double(blueScore), Double(redScore)))
         }
-        guard !sides.isEmpty else { return [:] }
+        guard !sides.isEmpty else { return PowerRatings(stats: [:], appearances: 0) }
 
         let teams = Array(Set(sides.flatMap(\.teams))).sorted { TeamNumber.precedes($0, $1) }
-
-        // Not enough play to fit anything meaningful.
-        //
-        // Each match gives two equations and involves four teams, so the fit
-        // needs roughly as many played matches as there are teams for each to
-        // be seen about four times. Below that the system is underdetermined
-        // and the solver answers with numbers that look like ratings and are
-        // not: an event 39 matches into a 219-match schedule produced an OPR of
-        // -70 and a CCWM of -222. Publishing those is worse than publishing
-        // nothing, so nothing is what it returns.
-        guard played.count >= teams.count else { return [:] }
+        let appearances = 4 * Double(played.count) / Double(teams.count)
         let index = Dictionary(uniqueKeysWithValues: teams.enumerated().map { ($1, $0) })
         let n = teams.count
 
@@ -72,15 +76,30 @@ extension Division {
             }
         }
 
-        // A team that played few matches, or always with the same partner,
-        // leaves the system underdetermined. A small ridge keeps it solvable
-        // and pulls those teams gently toward zero rather than to infinity.
-        for i in 0..<n { a[i][i] += 1e-6 }
+        // The ridge, scaled to how thin the data is.
+        //
+        // Each match gives two equations and involves four teams, so a team
+        // needs about four appearances before its own rating is pinned down.
+        // Short of that the system is underdetermined and an unregularised
+        // solve answers with numbers shaped like ratings that are not: at 1.8
+        // appearances each this event fitted a range of -115 to +183, which
+        // correlated with actual scoring at only 0.50. Shrinking in proportion
+        // to how far short of four appearances the event is brings that to
+        // -2 to +53 at a correlation of 0.90 - values that move as the event
+        // goes on, but that rank teams sensibly from the first morning. Once
+        // there is enough play the ridge vanishes and the fit is the true one.
+        let ridge = appearances >= 4 ? 1e-6 : max(1e-6, 4 - appearances)
+        for i in 0..<n { a[i][i] += ridge }
 
-        guard let opr = Self.solve(a, offence), let dpr = Self.solve(a, defence) else { return [:] }
-        return Dictionary(uniqueKeysWithValues: teams.enumerated().map { i, team in
-            (team, TeamEventStats(opr: opr[i], dpr: dpr[i]))
-        })
+        guard let opr = Self.solve(a, offence), let dpr = Self.solve(a, defence) else {
+            return PowerRatings(stats: [:], appearances: appearances)
+        }
+        return PowerRatings(
+            stats: Dictionary(uniqueKeysWithValues: teams.enumerated().map { i, team in
+                (team, TeamEventStats(opr: opr[i], dpr: dpr[i]))
+            }),
+            appearances: appearances
+        )
     }
 
     /// Gaussian elimination with partial pivoting. Returns nil if the system
@@ -134,8 +153,10 @@ public struct EventStanding: Sendable, Hashable {
     public let ap: Int?
     public let sp: Int?
     public let highScore: Int?
-    /// Absent until the event has played enough matches to fit them.
+    /// Absent until the event has played a few matches at all.
     public let stats: TeamEventStats?
+    /// True while there is too little play for the fit to settle.
+    public let statsAreProvisional: Bool
 
     public var record: String { "\(wins)\u{2013}\(losses)\u{2013}\(ties)" }
 }
@@ -154,7 +175,8 @@ extension EventDetailResponse {
                 rank: row.rank,
                 wins: row.wins, losses: row.losses, ties: row.ties,
                 wp: row.wp, ap: row.ap, sp: row.sp, highScore: row.highScore,
-                stats: division.powerRatings()[wanted]
+                stats: division.powerRatings()[wanted],
+                statsAreProvisional: division.powerRatings().isProvisional
             )
         }
         return nil
@@ -191,7 +213,7 @@ extension Division {
     /// figure the API did not send - sorts to the end rather than to the top,
     /// whichever direction the column runs.
     public func standings(by sort: StandingSort,
-                          ratings: [String: TeamEventStats] = [:]) -> [DivisionRanking] {
+                          ratings: PowerRatings? = nil) -> [DivisionRanking] {
         func value(_ row: DivisionRanking) -> Double? {
             switch sort {
             case .rank: return Double(row.rank)
@@ -199,9 +221,9 @@ extension Division {
             case .ap: return row.ap.map(Double.init)
             case .sp: return row.sp.map(Double.init)
             case .high: return row.highScore.map(Double.init)
-            case .opr: return ratings[row.team.name.uppercased()]?.opr
-            case .dpr: return ratings[row.team.name.uppercased()]?.dpr
-            case .ccwm: return ratings[row.team.name.uppercased()]?.ccwm
+            case .opr: return ratings?[row.team.name]?.opr
+            case .dpr: return ratings?[row.team.name]?.dpr
+            case .ccwm: return ratings?[row.team.name]?.ccwm
             }
         }
 

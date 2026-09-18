@@ -17,6 +17,7 @@
 		255E646C60DF5E3585A92106 /* TeamProfileView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D47F68F4737F5D8EAD3AA1D9 /* TeamProfileView.swift */; };
 		786BB5F44AB35E48A4F107D3 /* TeamsDirectoryView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C507F03AB5965F30833C1C2D /* TeamsDirectoryView.swift */; };
 		9AE44FBB64C4527590ED11A6 /* VEXRankApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7AC1847C0BA504280D812F4 /* VEXRankApp.swift */; };
+		9F3922C845875EE7B0D08E88 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 12DCD5C8977956CCAC27F407 /* Assets.xcassets */; };
 		9F963081C2FC55EEB855E009 /* VEXRankKit in Frameworks */ = {isa = PBXBuildFile; productRef = 3500BCE3FA9B59099A456BAD /* VEXRankKit */; };
 /* End PBXBuildFile section */
 
@@ -32,8 +33,9 @@
 		D47F68F4737F5D8EAD3AA1D9 /* TeamProfileView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "TeamProfileView.swift"; path = "App/TeamProfileView.swift"; sourceTree = "<group>"; };
 		C507F03AB5965F30833C1C2D /* TeamsDirectoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "TeamsDirectoryView.swift"; path = "App/TeamsDirectoryView.swift"; sourceTree = "<group>"; };
 		A7AC1847C0BA504280D812F4 /* VEXRankApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = "VEXRankApp.swift"; path = "App/VEXRankApp.swift"; sourceTree = "<group>"; };
+		12DCD5C8977956CCAC27F407 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; name = Assets.xcassets; path = "App/Assets.xcassets"; sourceTree = "<group>"; };
 		45BBF11362675F6CAA3C2B8F /* VEXRankKit */ = {isa = PBXFileReference; lastKnownFileType = wrapper; name = VEXRankKit; path = VEXRankKit; sourceTree = "<group>"; };
-		9E871DE359D151C69619CA06 /* VEXRank.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VEXRank.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		9E871DE359D151C69619CA06 /* MakapakaScout.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MakapakaScout.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -55,6 +57,7 @@
 				D47F68F4737F5D8EAD3AA1D9 /* TeamProfileView.swift */,
 				C507F03AB5965F30833C1C2D /* TeamsDirectoryView.swift */,
 				A7AC1847C0BA504280D812F4 /* VEXRankApp.swift */,
+				12DCD5C8977956CCAC27F407 /* Assets.xcassets */,
 				45BBF11362675F6CAA3C2B8F /* VEXRankKit */,
 				8F7121BF97145A59848E4802 /* Products */,
 			);
@@ -62,22 +65,22 @@
 		};
 		8F7121BF97145A59848E4802 /* Products */ = {
 			isa = PBXGroup;
-			children = ( 9E871DE359D151C69619CA06 /* VEXRank.app */, );
+			children = ( 9E871DE359D151C69619CA06 /* MakapakaScout.app */, );
 			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
-		F4CE289E12215AE7B0E326C7 /* VEXRank */ = {
+		F4CE289E12215AE7B0E326C7 /* MakapakaScout */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 778376F650CE51B2A226C02C;
 			buildPhases = ( 705A460284BC5C909423EC47, B162EB10A92458F69435A424, 857898A11FE55ED2AA6308D1, );
 			buildRules = ();
 			dependencies = ();
-			name = VEXRank;
-			productName = VEXRank;
-			productReference = 9E871DE359D151C69619CA06 /* VEXRank.app */;
+			name = MakapakaScout;
+			productName = MakapakaScout;
+			productReference = 9E871DE359D151C69619CA06 /* MakapakaScout.app */;
 			packageProductDependencies = ( 3500BCE3FA9B59099A456BAD /* VEXRankKit */, );
 			productType = "com.apple.product-type.application";
 		};
@@ -102,7 +105,7 @@
 			packageReferences = ( AEACCEC475A051918624972F /* XCLocalSwiftPackageReference "VEXRankKit" */, );
 			projectDirPath = "";
 			projectRoot = "";
-			targets = ( F4CE289E12215AE7B0E326C7 /* VEXRank */, );
+			targets = ( F4CE289E12215AE7B0E326C7 /* MakapakaScout */, );
 		};
 /* End PBXProject section */
 
@@ -111,7 +114,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-
+				9F3922C845875EE7B0D08E88 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -179,13 +182,14 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F6CMB42387;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = VEXRank;
+				INFOPLIST_KEY_CFBundleDisplayName = "Makapaka Scout";
+				INFOPLIST_KEY_CFBundleName = "Makapaka Scout";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.vexrank.app;
-				PRODUCT_NAME = VEXRank;
+				PRODUCT_NAME = MakapakaScout;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};
@@ -199,13 +203,14 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = F6CMB42387;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = VEXRank;
+				INFOPLIST_KEY_CFBundleDisplayName = "Makapaka Scout";
+				INFOPLIST_KEY_CFBundleName = "Makapaka Scout";
 				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
 				INFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.vexrank.app;
-				PRODUCT_NAME = VEXRank;
+				PRODUCT_NAME = MakapakaScout;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = 1;
 			};

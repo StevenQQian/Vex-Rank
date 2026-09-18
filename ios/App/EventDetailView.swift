@@ -277,11 +277,15 @@ struct EventDetailView: View {
                             Text(row.record).font(.caption).foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
-                        statLine(row, ratings[row.team.name.uppercased()], showSeed: order != .rank)
+                        statLine(row, ratings[row.team.name], showSeed: order != .rank)
                     }
                 }
             }
             revealButton(total: all.count, key: key, noun: "teams")
+            if ratings.isProvisional && !ratings.isEmpty {
+                Text("OPR, DPR and CCWM are provisional - only \(String(format: "%.1f", ratings.appearances)) matches per team so far.")
+                    .font(.caption2).foregroundStyle(.tertiary)
+            }
         }
         .listRowBackground(theme.surface)
     }
@@ -488,14 +492,14 @@ final class EventDetailModel {
     /// Fitted ratings per division, computed once and kept: solving the
     /// system on every redraw of the list would be wasteful, and the input
     /// does not change once the event is loaded.
-    private var ratingsCache: [Int: [String: TeamEventStats]] = [:]
+    private var ratingsCache: [Int: PowerRatings] = [:]
 
     func sorts(for division: Division) -> [StandingSort] {
         let rated = !powerRatings(for: division).isEmpty
         return StandingSort.allCases.filter { rated || !$0.needsRatings }
     }
 
-    func powerRatings(for division: Division) -> [String: TeamEventStats] {
+    func powerRatings(for division: Division) -> PowerRatings {
         if let cached = ratingsCache[division.id] { return cached }
         let fitted = division.powerRatings()
         ratingsCache[division.id] = fitted

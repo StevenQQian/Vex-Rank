@@ -30,7 +30,7 @@ public struct TeamMatch: Identifiable, Sendable, Hashable {
     }
 }
 
-/// A team's wins, losses and ties at one event.
+/// A team's wins, losses and ties at one event, as the scores read.
 public struct TeamEventRecord: Sendable, Hashable {
     public let wins: Int
     public let losses: Int
@@ -45,6 +45,53 @@ public struct TeamEventRecord: Sendable, Hashable {
         losses = matches.filter { $0.outcome == .lost }.count
         ties = matches.filter { $0.outcome == .tied }.count
         remaining = matches.filter { !$0.isPlayed }.count
+    }
+
+    public init(wins: Int, losses: Int, ties: Int, remaining: Int) {
+        self.wins = wins
+        self.losses = losses
+        self.ties = ties
+        self.remaining = remaining
+    }
+}
+
+/// What the scores say against what the event says.
+///
+/// A team can lose a match on points and still be credited with the win,
+/// because the other alliance was disqualified. Nothing in the match payload
+/// marks that - there is no flag, and no per-match win points - so comparing
+/// scores will call it a loss while the standings call it a win.
+///
+/// The standings are the authority, so where the two disagree the per-match
+/// labels are the thing that is wrong, and they are shown as unconfirmed
+/// rather than asserted.
+public struct RecordCheck: Sendable, Hashable {
+    /// From the event's own standings.
+    public let officialWins: Int
+    public let officialLosses: Int
+    public let officialTies: Int
+    /// From comparing the scores.
+    public let scoredWins: Int
+    public let scoredLosses: Int
+    public let scoredTies: Int
+
+    public var agrees: Bool {
+        officialWins == scoredWins && officialLosses == scoredLosses && officialTies == scoredTies
+    }
+
+    /// Results the standings credit that the scores do not explain - almost
+    /// always a disqualification of the other alliance.
+    public var unexplainedWins: Int { max(0, officialWins - scoredWins) }
+
+    public var officialSummary: String { "\(officialWins)\u{2013}\(officialLosses)\u{2013}\(officialTies)" }
+
+    public init(standing: EventStanding, matches: [TeamMatch]) {
+        officialWins = standing.wins
+        officialLosses = standing.losses
+        officialTies = standing.ties
+        scoredWins = matches.filter { $0.outcome == .won }.count
+        scoredLosses = matches.filter { $0.outcome == .lost }.count
+        scoredTies = matches.filter { $0.outcome == .tied }.count
     }
 }
 

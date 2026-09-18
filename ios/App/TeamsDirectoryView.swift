@@ -23,29 +23,25 @@ struct TeamsDirectoryView: View {
     private static let grades = ["High School", "Middle School"]
 
     var body: some View {
-        Group {
+        VStack(spacing: 0) {
+            Picker("Scope", selection: $scope) {
+                ForEach(Scope.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+
+            Divider()
+
             if scope == .favourites {
                 favouritesList
             } else {
                 directory
             }
         }
-        .animation(.easeOut(duration: 0.25), value: scope)
         .background(theme.page)
         .searchable(text: $query, prompt: scope == .favourites
                     ? "Search your teams" : "Team number, name or organization")
-        .safeAreaInset(edge: .top, spacing: 0) {
-            VStack(spacing: 0) {
-                Picker("Scope", selection: $scope) {
-                    ForEach(Scope.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                Divider()
-            }
-            .background(theme.page)
-        }
     }
 
     /// The reader's own teams, drawn from what is stored on the device, so it
@@ -69,8 +65,10 @@ struct TeamsDirectoryView: View {
                     .buttonStyle(.borderedProminent)
                     .tint(theme.accent)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if shown.isEmpty {
             ContentUnavailableView.search(text: query)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             List {
                 ForEach(shown) { team in
@@ -83,7 +81,10 @@ struct TeamsDirectoryView: View {
                         }
                         .padding(.vertical, 2)
                     }
-                    .listRowBackground(theme.surface)
+                    // The page colour, not the raised one: a handful of rows on
+                    // a lighter background reads as a slab that stops halfway
+                    // down the screen.
+                    .listRowBackground(Color.clear)
                     .swipeActions {
                         Button(role: .destructive) {
                             favourites.remove(team.number)
@@ -230,7 +231,7 @@ final class TeamsDirectoryModel {
     /// Teams paired with their lowercased search text. Built once at load:
     /// re-lowering 56,000 teams on every keystroke is the difference between a
     /// responsive field and a stuttering one.
-    private var indexed: [(team: DirectoryTeam, haystack: String)] = []
+    private var indexed: [(team: DirectoryTeam, haystack: [UInt8])] = []
     private var teams: [DirectoryTeam] = []
     private let api = VEXRankAPI()
 

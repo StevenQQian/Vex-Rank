@@ -2,7 +2,7 @@
 <Workspace
    version = "1.0">
    <FileRef
-      location = "group:VEXRank.xcodeproj">
+      location = "group:MakapakaScout.xcodeproj">
    </FileRef>
    <FileRef
       location = "group:VEXRankKit">

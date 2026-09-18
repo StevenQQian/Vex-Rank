@@ -734,7 +734,7 @@ final class TeamDirectoryTests: XCTestCase {
         return try JSONDecoder().decode(TeamDirectoryResponse.self, from: Data(contentsOf: url)).teams
     }
 
-    private func indexed() throws -> [(team: DirectoryTeam, haystack: String)] {
+    private func indexed() throws -> [(team: DirectoryTeam, haystack: [UInt8])] {
         try directory().map { ($0, TeamDirectory.haystack($0)) }
     }
 
@@ -748,8 +748,9 @@ final class TeamDirectoryTests: XCTestCase {
     func testANumberFindsItsWholeFamily() throws {
         let family = TeamDirectory.search(try indexed(), query: "2011")
         XCTAssertGreaterThan(family.count, 1)
-        XCTAssertTrue(family.allSatisfy { $0.number.lowercased().contains("2011")
-            || TeamDirectory.haystack($0).contains("2011") })
+        XCTAssertTrue(family.allSatisfy {
+            TeamDirectory.contains(TeamDirectory.haystack($0), Array("2011".utf8))
+        })
         // And the suffix narrows it back down to one.
         let one = TeamDirectory.search(try indexed(), query: " 2011a ")
         XCTAssertEqual(one.first?.number.lowercased(), "2011a")
@@ -1221,7 +1222,7 @@ final class PowerRatingTests: XCTestCase {
 
     func testEveryTeamThatPlayedGetsARating() throws {
         let division = try division()
-        let ratings = division.powerRatings()
+        let ratings = division.powerRatings().stats
         let played = Set(division.qualification.filter(\.isPlayed).flatMap {
             ($0.red?.numbers ?? []) + ($0.blue?.numbers ?? [])
         }.map { $0.uppercased() })
@@ -1242,7 +1243,7 @@ final class PowerRatingTests: XCTestCase {
     /// is a property of the sport rather than of the code.
     func testSolvesTheNormalEquationsExactly() throws {
         let division = try division()
-        let ratings = division.powerRatings()
+        let ratings = division.powerRatings().stats
 
         var sides: [(teams: [String], scored: Double)] = []
         for match in division.qualification.filter(\.isPlayed) {
@@ -1271,7 +1272,7 @@ final class PowerRatingTests: XCTestCase {
 
     func testTheFitTracksTheMatchesItWasBuiltFrom() throws {
         let division = try division()
-        let ratings = division.powerRatings()
+        let ratings = division.powerRatings().stats
         var error = 0.0
         var total = 0.0
         var count = 0.0
@@ -1298,7 +1299,7 @@ final class PowerRatingTests: XCTestCase {
     }
 
     func testOffenceAndDefenceDifferAndRankSensibly() throws {
-        let ratings = try division().powerRatings()
+        let ratings = try division().powerRatings().stats
         let oprs = ratings.values.map(\.opr)
         let dprs = ratings.values.map(\.dpr)
         // A fitted rating set must actually distinguish teams.
@@ -1321,20 +1322,59 @@ final class PowerRatingTests: XCTestCase {
         let qualTeams = Set(division.qualification.filter(\.isPlayed).flatMap {
             ($0.red?.numbers ?? []) + ($0.blue?.numbers ?? [])
         }.map { $0.uppercased() })
-        XCTAssertTrue(Set(division.powerRatings().keys).isSubset(of: qualTeams))
+        XCTAssertTrue(Set(division.powerRatings().stats.keys).isSubset(of: qualTeams))
     }
 
-    func testAHalfPlayedEventIsNotRatedAtAll() throws {
-        // Captured 39 matches into a 219-match schedule across 97 teams: about
-        // one and a half appearances each. Solving that produced an OPR of -70
-        // and a CCWM of -222 - numbers shaped like ratings that mean nothing.
+    func testAThinEventIsRatedButShrunkTowardZero() throws {
+        // 39 matches into a 219-match schedule across 97 teams: about 1.8
+        // appearances each. Solved without regularisation this fitted a range
+        // of -115 to +183, which is not a rating of anything. The ridge scales
+        // with how thin the data is, so the values stay in a believable range
+        // and still rank teams.
         let partial = try fixture("event-partial", as: EventDetailResponse.self)
         let division = try XCTUnwrap(partial.divisions.first)
-        let played = division.qualification.filter(\.isPlayed)
-        XCTAssertGreaterThan(played.count, 0, "it has started")
-        let teams = Set(played.flatMap { ($0.red?.numbers ?? []) + ($0.blue?.numbers ?? []) })
-        XCTAssertLessThan(played.count, teams.count, "but each team is barely seen")
-        XCTAssertTrue(division.powerRatings().isEmpty)
+        let ratings = division.powerRatings()
+        XCTAssertFalse(ratings.isEmpty)
+        XCTAssertTrue(ratings.isProvisional)
+        XCTAssertLessThan(ratings.appearances, 4)
+
+        let oprs = ratings.stats.values.map(\.opr)
+        let scores = division.qualification.filter(\.isPlayed)
+            .flatMap { [$0.red?.score, $0.blue?.score] }.compactMap { $0 }.map(Double.init)
+        let highest = scores.max() ?? 0
+        // No team can be fitted as contributing more than the highest score
+        // anyone actually managed, nor as costing its alliance that much.
+        for opr in oprs {
+            XCTAssertLessThan(opr, highest, "fitted \(opr) against a best of \(highest)")
+            XCTAssertGreaterThan(opr, -highest)
+        }
+    }
+
+    func testTheThinFitStillRanksTeamsSensibly() throws {
+        let partial = try fixture("event-partial", as: EventDetailResponse.self)
+        let division = try XCTUnwrap(partial.divisions.first)
+        let ratings = division.powerRatings()
+
+        // Each team's average alliance score is a crude but independent read on
+        // how well it is doing. A shrunk fit should track it closely; the
+        // unregularised one managed only 0.50.
+        var total: [String: Double] = [:], count: [String: Double] = [:]
+        for match in division.qualification.filter(\.isPlayed) {
+            for alliance in [match.red, match.blue] {
+                guard let alliance, let score = alliance.score else { continue }
+                for number in alliance.numbers.map({ $0.uppercased() }) {
+                    total[number, default: 0] += Double(score)
+                    count[number, default: 0] += 1
+                }
+            }
+        }
+        let teams = ratings.stats.keys.filter { count[$0] != nil }
+        let x = teams.map { ratings.stats[$0]!.opr }
+        let y = teams.map { total[$0]! / count[$0]! }
+        let mx = x.reduce(0, +) / Double(x.count), my = y.reduce(0, +) / Double(y.count)
+        let cov = zip(x, y).reduce(0.0) { $0 + ($1.0 - mx) * ($1.1 - my) }
+        let sx = x.reduce(0.0) { $0 + pow($1 - mx, 2) }, sy = y.reduce(0.0) { $0 + pow($1 - my, 2) }
+        XCTAssertGreaterThan(cov / (sx * sy).squareRoot(), 0.8)
     }
 
     func testAFinishedEventClearsTheThreshold() throws {
@@ -1399,15 +1439,22 @@ final class EventStandingTests: XCTestCase {
         XCTAssertNil(detail.standing(for: "31260X"))
     }
 
-    func testFittedStatsAreWithheldWhileTheEventIsYoung() throws {
-        // 252H, seeded 33rd at an event 39 matches into its schedule: it has a
-        // rank and a record, but nothing has been played enough to rate it.
+    func testFittedStatsAreProvisionalWhileTheEventIsYoung() throws {
+        // 252H, seeded 33rd at an event 39 matches into its schedule. The
+        // ratings are shown - a reader at the event wants them from the first
+        // morning - but flagged, because they will move a lot.
         let partial = try fixture("event-partial", as: EventDetailResponse.self)
         let standing = try XCTUnwrap(partial.standing(for: "252H"))
         XCTAssertEqual(standing.rank, 33)
         XCTAssertEqual(standing.record, "1\u{2013}0\u{2013}0")
         XCTAssertNotNil(standing.wp)
-        XCTAssertNil(standing.stats, "too little play to fit a rating")
+        XCTAssertNotNil(standing.stats)
+        XCTAssertTrue(standing.statsAreProvisional)
+
+        // A finished event is not flagged.
+        let finished = try fixture("event-detail", as: EventDetailResponse.self)
+        let done = try XCTUnwrap(finished.standing(for: finished.divisions[0].rankings[0].team.name))
+        XCTAssertFalse(done.statsAreProvisional)
     }
 
     func testTheRightDivisionIsReported() throws {
@@ -1436,15 +1483,15 @@ final class StandingSortTests: XCTestCase {
         XCTAssertFalse(ratings.isEmpty)
 
         let byDPR = division.standings(by: .dpr, ratings: ratings)
-        let dprs = byDPR.compactMap { ratings[$0.team.name.uppercased()]?.dpr }
+        let dprs = byDPR.compactMap { ratings[$0.team.name]?.dpr }
         XCTAssertEqual(dprs, dprs.sorted(), "DPR must run smallest first")
 
         for sort in [StandingSort.opr, .ccwm, .wp, .ap, .sp, .high] {
             let rows = division.standings(by: sort, ratings: ratings)
             let values: [Double] = rows.compactMap { row in
                 switch sort {
-                case .opr: return ratings[row.team.name.uppercased()]?.opr
-                case .ccwm: return ratings[row.team.name.uppercased()]?.ccwm
+                case .opr: return ratings[row.team.name]?.opr
+                case .ccwm: return ratings[row.team.name]?.ccwm
                 case .wp: return row.wp.map(Double.init)
                 case .ap: return row.ap.map(Double.init)
                 case .sp: return row.sp.map(Double.init)
@@ -1462,8 +1509,7 @@ final class StandingSortTests: XCTestCase {
         let worst = try XCTUnwrap(division.standings(by: .dpr, ratings: ratings).last)
         // Reversing the comparison would silently put the leakiest defence on
         // top, which is the mistake this ordering exists to avoid.
-        XCTAssertLessThan(ratings[best.team.name.uppercased()]!.dpr,
-                          ratings[worst.team.name.uppercased()]!.dpr)
+        XCTAssertLessThan(ratings[best.team.name]!.dpr, ratings[worst.team.name]!.dpr)
     }
 
     func testRankOrderIsTheSeedingOrder() throws {
@@ -1486,7 +1532,7 @@ final class StandingSortTests: XCTestCase {
         let division = try division()
         // No ratings supplied, so every OPR is missing: the order falls back to
         // seeding rather than reversing or dropping rows.
-        let rows = division.standings(by: .opr, ratings: [:])
+        let rows = division.standings(by: .opr, ratings: nil)
         XCTAssertEqual(rows.map(\.rank), rows.map(\.rank).sorted())
     }
 
@@ -1496,14 +1542,17 @@ final class StandingSortTests: XCTestCase {
         XCTAssertTrue(rated.contains(.dpr))
         XCTAssertTrue(rated.contains(.ccwm))
 
+        // A young event offers them too, now that its values are shrunk into a
+        // usable range rather than withheld.
         let young = try XCTUnwrap(fixture("event-partial", as: EventDetailResponse.self).divisions.first)
         let sorts = young.availableSorts()
-        XCTAssertFalse(sorts.contains(.opr))
-        XCTAssertFalse(sorts.contains(.dpr))
-        XCTAssertFalse(sorts.contains(.ccwm))
-        // The counted columns are still there to sort by.
+        XCTAssertTrue(sorts.contains(.opr))
         XCTAssertTrue(sorts.contains(.wp))
         XCTAssertTrue(sorts.contains(.rank))
+
+        // An event that has not started has nothing to fit and offers none.
+        let unplayed = try XCTUnwrap(fixture("event-live", as: EventDetailResponse.self).divisions.first)
+        XCTAssertFalse(unplayed.availableSorts().contains(.opr))
     }
 }
 
@@ -1704,5 +1753,93 @@ extension MomentumTests {
         let one = [MomentumPoint(id: 1, match: 1, name: "Q1", margin: 12, cumulative: 12, outcome: .won)]
         XCTAssertTrue(TeamMomentum.growing(one, progress: 0).isEmpty)
         XCTAssertEqual(TeamMomentum.growing(one, progress: 1).count, 1)
+    }
+}
+
+extension TeamDirectoryTests {
+    func testByteSearchMatchesWhatStringSearchWould() throws {
+        let teams = try directory()
+        let indexed = teams.map { ($0, TeamDirectory.haystack($0)) }
+        // The byte scan replaced String.contains for speed; it has to agree
+        // with it exactly, including where the needle spans two fields.
+        for query in ["2011", "2011a", "robotics", "team a", "zzz", "", "  ", "252h"] {
+            let fast = Set(TeamDirectory.search(indexed, query: query).map(\.id))
+            let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let tokens = needle.split(whereSeparator: \.isWhitespace).map(String.init)
+            let slow = Set(teams.filter { team in
+                let hay = "\(team.number) \(team.name ?? "") \(team.organization ?? "")".lowercased()
+                return tokens.allSatisfy { hay.contains($0) }
+            }.map(\.id))
+            XCTAssertEqual(fast, slow, "disagreed on \"\(query)\"")
+        }
+    }
+
+    func testByteContainsHandlesTheEdges() {
+        let hay = Array("2011a holy cow".utf8)
+        XCTAssertTrue(TeamDirectory.contains(hay, Array("2011a".utf8)))
+        XCTAssertTrue(TeamDirectory.contains(hay, Array("cow".utf8)))
+        XCTAssertTrue(TeamDirectory.contains(hay, Array("holy".utf8)))
+        XCTAssertTrue(TeamDirectory.contains(hay, []), "an empty needle matches")
+        XCTAssertFalse(TeamDirectory.contains(hay, Array("cows".utf8)), "past the end")
+        XCTAssertFalse(TeamDirectory.contains(Array("ab".utf8), Array("abc".utf8)), "longer than the hay")
+        // A near miss that shares its first byte must not match.
+        XCTAssertFalse(TeamDirectory.contains(hay, Array("2012".utf8)))
+    }
+
+    // There is deliberately no timing test here. This suite builds
+    // unoptimised, where the byte scan is the slower of the two - it pays a
+    // bounds check per byte while String.contains calls into stdlib code that
+    // was compiled with optimisation. Measured with -O, which is what ships,
+    // the byte scan is about fifty times faster over 56,000 rows. A timing
+    // assertion run in this build would measure the wrong world and would have
+    // to be written backwards to pass.
+}
+
+/// Reconciling the scores against the standings, which disagree when an
+/// alliance has been disqualified.
+final class RecordCheckTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    func testAgreesWhenNothingOddHappened() throws {
+        let detail = try fixture("event-detail", as: EventDetailResponse.self)
+        let team = try XCTUnwrap(detail.divisions.first?.rankings.first?.team.name)
+        let check = RecordCheck(standing: try XCTUnwrap(detail.standing(for: team)),
+                                matches: detail.matches(for: team))
+        XCTAssertTrue(check.agrees, "a finished event's scores should add up to its standings")
+        XCTAssertEqual(check.unexplainedWins, 0)
+    }
+
+    func testSpotsAWinTheScoresDoNotExplain() throws {
+        // 252H: the standings credit two wins, but on score they lost their
+        // first match 28-115 and won the second 78-77. The other alliance was
+        // disqualified, and nothing in the payload says so. Captured live from
+        // the event while exactly that was on screen.
+        let partial = try fixture("event-dq", as: EventDetailResponse.self)
+        let standing = try XCTUnwrap(partial.standing(for: "252H"))
+        let matches = partial.matches(for: "252H")
+        let check = RecordCheck(standing: standing, matches: matches)
+
+        XCTAssertEqual(check.officialWins, 2)
+        XCTAssertEqual(check.officialLosses, 0)
+        XCTAssertEqual(check.scoredWins, 1)
+        XCTAssertEqual(check.scoredLosses, 1)
+        XCTAssertFalse(check.agrees)
+        XCTAssertEqual(check.unexplainedWins, 1)
+        XCTAssertEqual(check.officialSummary, "2\u{2013}0\u{2013}0")
+    }
+
+    func testTheRecordShownIsTheOfficialOne() throws {
+        let partial = try fixture("event-dq", as: EventDetailResponse.self)
+        let standing = try XCTUnwrap(partial.standing(for: "252H"))
+        let matches = partial.matches(for: "252H")
+        // Counting the scores would show 1-1-0 under a rank earned with 2-0-0.
+        let fromScores = TeamEventRecord(matches: matches)
+        XCTAssertEqual(fromScores.summary, "1\u{2013}1\u{2013}0")
+        let official = TeamEventRecord(wins: standing.wins, losses: standing.losses,
+                                       ties: standing.ties, remaining: 0)
+        XCTAssertEqual(official.summary, "2\u{2013}0\u{2013}0")
     }
 }

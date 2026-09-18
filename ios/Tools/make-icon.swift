@@ -15,12 +15,30 @@ import UniformTypeIdentifiers
 // replacing every white pixel, so white *inside* a logo is never eaten.
 
 guard CommandLine.arguments.count >= 3 else {
-    FileHandle.standardError.write(Data("usage: make-icon.swift <source> <output.png> [size]\n".utf8))
+    FileHandle.standardError.write(Data("usage: make-icon.swift <source> <output.png> [size] [--background RRGGBB]\n".utf8))
     exit(2)
 }
 let sourcePath = CommandLine.arguments[1]
 let outputPath = CommandLine.arguments[2]
-let size = CommandLine.arguments.count > 3 ? Int(CommandLine.arguments[3])! : 1024
+var size = 1024
+var override: (UInt8, UInt8, UInt8)?
+var argument = 3
+while argument < CommandLine.arguments.count {
+    let value = CommandLine.arguments[argument]
+    if value == "--background", argument + 1 < CommandLine.arguments.count {
+        // The artwork's own background cannot always be found: a logo drawn on
+        // a white card sitting on a white page has no edge between the two, so
+        // trimming leaves only the mark and there is nothing left to sample.
+        let hex = CommandLine.arguments[argument + 1].replacingOccurrences(of: "#", with: "")
+        if hex.count == 6, let number = UInt32(hex, radix: 16) {
+            override = (UInt8(number >> 16 & 0xFF), UInt8(number >> 8 & 0xFF), UInt8(number & 0xFF))
+        }
+        argument += 2
+    } else {
+        size = Int(value) ?? size
+        argument += 1
+    }
+}
 
 guard let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: sourcePath) as CFURL, nil),
       let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else {
@@ -85,8 +103,17 @@ for (x, y) in probes where x >= 0 && y >= 0 && x < width && y < height && !isWhi
     let key = UInt32(pixels[i]) << 16 | UInt32(pixels[i + 1]) << 8 | UInt32(pixels[i + 2])
     counts[key, default: 0] += 1
 }
-let fill = counts.max(by: { $0.value < $1.value })?.key ?? 0
-let fillR = UInt8((fill >> 16) & 0xFF), fillG = UInt8((fill >> 8) & 0xFF), fillB = UInt8(fill & 0xFF)
+// White, not black, when nothing could be sampled. A logo whose card is the
+// same colour as the page it sits on leaves no probe to read, and defaulting
+// to black paints a dark tile behind artwork drawn for a light one - which is
+// exactly what happened the first time this ran on a real logo.
+let sampled = counts.max(by: { $0.value < $1.value })?.key
+let fallback: UInt32 = 0xFFFFFF
+let fill = sampled ?? fallback
+var fillR = UInt8((fill >> 16) & 0xFF), fillG = UInt8((fill >> 8) & 0xFF), fillB = UInt8(fill & 0xFF)
+if let override {
+    (fillR, fillG, fillB) = override
+}
 
 // Grow the background by a couple of pixels so the anti-aliased edge of the
 // original card is painted over too; left alone it survives as a pale ring
@@ -127,11 +154,21 @@ guard let out = CGContext(data: nil, width: size, height: size,
                           bitsPerComponent: 8, bytesPerRow: 0,
                           space: CGColorSpaceCreateDeviceRGB(),
                           bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { exit(1) }
-out.setFillColor(CGColor(red: CGFloat(fillR) / 255, green: CGFloat(fillG) / 255,
-                         blue: CGFloat(fillB) / 255, alpha: 1))
+// Built in the context's own colour space. CGColor(red:green:blue:) is sRGB,
+// and handing that to a DeviceRGB context converts it - 43 came out as 57,
+// which drew the padding a visibly lighter grey than the artwork it framed.
+let deviceSpace = CGColorSpaceCreateDeviceRGB()
+out.setFillColor(CGColor(colorSpace: deviceSpace,
+                         components: [CGFloat(fillR) / 255, CGFloat(fillG) / 255,
+                                      CGFloat(fillB) / 255, 1])!)
 out.fill(CGRect(x: 0, y: 0, width: size, height: size))
 out.interpolationQuality = .high
-out.draw(cropped, in: CGRect(x: 0, y: 0, width: size, height: size))
+// A little air around the mark. Drawn edge to edge it reads as cramped, and
+// the system's rounded mask clips whatever runs into the corners.
+let padding = CGFloat(size) * 0.08
+out.draw(cropped, in: CGRect(x: padding, y: padding,
+                             width: CGFloat(size) - padding * 2,
+                             height: CGFloat(size) - padding * 2))
 
 guard let final = out.makeImage(),
       let destination = CGImageDestinationCreateWithURL(
