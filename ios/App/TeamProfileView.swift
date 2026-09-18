@@ -13,7 +13,19 @@ struct TeamProfileView: View {
     private var row: TeamRanking? { ranking ?? model.resolvedRanking }
     @Environment(\.vexTheme) private var theme
     @State private var model = TeamProfileModel()
-    @State private var season: Int?
+    /// Seeded at init rather than assigned in `.task`: the view is recreated
+    /// as the profile loads, and an assignment made from the task raced that -
+    /// it ran, but the body never saw it. A State initial value survives.
+    @State private var season: Int? = TeamProfileView.launchSeason
+
+    /// `-season 197` opens the profile on that season. The same hook as
+    /// `-team` and `-event`: the picker cannot be driven without tapping, so
+    /// this is how the season-scoped sections get verified.
+    private static var launchSeason: Int? {
+        guard let index = CommandLine.arguments.firstIndex(of: "-season"),
+              CommandLine.arguments.indices.contains(index + 1) else { return nil }
+        return Int(CommandLine.arguments[index + 1])
+    }
 
     var body: some View {
         // The viewport height is published to the reveal modifier, which needs
@@ -54,7 +66,9 @@ struct TeamProfileView: View {
         .background(theme.page)
         .navigationTitle(number)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await model.load(number: number, ranking: ranking) }
+        .task {
+            await model.load(number: number, ranking: ranking)
+        }
     }
 
     private var header: some View {
@@ -103,17 +117,47 @@ struct TeamProfileView: View {
     /// Which season the sections below describe. The web offers the same
     /// choice; without it the profile silently mixed two seasons' events into
     /// one list.
+    ///
+    /// A dropdown rather than a segmented control: a long-running team has
+    /// several seasons, and segments divide the width evenly between them, so
+    /// "2026-27 Override" is squeezed to "2026-2..." as soon as there are more
+    /// than two. A menu costs one tap and stays readable at any count.
     @ViewBuilder
     private func seasonPicker(_ profile: TeamProfileResponse) -> some View {
         let seasons = profile.seasons
         if seasons.count > 1 {
-            Picker("Season", selection: Binding(
-                get: { season ?? seasons.first!.id },
-                set: { season = $0 }
-            )) {
-                ForEach(seasons) { Text($0.shortName).tag($0.id) }
+            let selected = season ?? seasons.first!.id
+            Menu {
+                // A check mark on the current one, so the menu says where you
+                // are as well as where you can go.
+                Picker("Season", selection: Binding(get: { selected }, set: { season = $0 })) {
+                    ForEach(seasons) { Text($0.shortName).tag($0.id) }
+                }
+            } label: {
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("SEASON").font(.caption2.weight(.semibold)).tracking(1.6)
+                            .foregroundStyle(.secondary)
+                        Text(seasons.first { $0.id == selected }?.shortName ?? "—")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(theme.accent)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
             }
-            .pickerStyle(.segmented)
+            // A Menu tints its whole label with the accent, which turned the
+            // heading and the season name red; plain resets that, and the
+            // chevron opts back in.
+            .buttonStyle(.plain)
+            .accessibilityLabel("Season")
         }
     }
 
