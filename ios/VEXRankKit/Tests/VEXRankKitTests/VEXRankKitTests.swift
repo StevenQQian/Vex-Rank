@@ -724,3 +724,111 @@ final class EventMatchTests: XCTestCase {
         XCTAssertEqual(numbers, numbers.sorted())
     }
 }
+
+/// The team directory's search rules, against a subset of the live feed: the
+/// first 300 teams plus every member of two numeric families, so the family
+/// behaviour is exercised on real rows rather than invented ones.
+final class TeamDirectoryTests: XCTestCase {
+    private func directory() throws -> [DirectoryTeam] {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/team-directory", withExtension: "json"))
+        return try JSONDecoder().decode(TeamDirectoryResponse.self, from: Data(contentsOf: url)).teams
+    }
+
+    private func indexed() throws -> [(team: DirectoryTeam, haystack: String)] {
+        try directory().map { ($0, TeamDirectory.haystack($0)) }
+    }
+
+    func testDecodesTheLiveDirectory() throws {
+        let teams = try directory()
+        XCTAssertGreaterThan(teams.count, 100)
+        XCTAssertTrue(teams.contains { $0.registered == false }, "a directory includes historical teams")
+        XCTAssertFalse(try XCTUnwrap(teams.first).number.isEmpty)
+    }
+
+    func testANumberFindsItsWholeFamily() throws {
+        let family = TeamDirectory.search(try indexed(), query: "2011")
+        XCTAssertGreaterThan(family.count, 1)
+        XCTAssertTrue(family.allSatisfy { $0.number.lowercased().contains("2011")
+            || TeamDirectory.haystack($0).contains("2011") })
+        // And the suffix narrows it back down to one.
+        let one = TeamDirectory.search(try indexed(), query: " 2011a ")
+        XCTAssertEqual(one.first?.number.lowercased(), "2011a")
+    }
+
+    func testExactNumberOutranksAPrefixAndAName() throws {
+        let results = TeamDirectory.search(try indexed(), query: "2011a")
+        let first = try XCTUnwrap(results.first)
+        XCTAssertEqual(first.number.lowercased(), "2011a")
+        XCTAssertEqual(TeamDirectory.priority("2011A", "2011a"), 0)
+        XCTAssertEqual(TeamDirectory.priority("2011AB", "2011a"), 1)
+        XCTAssertEqual(TeamDirectory.priority("9999Z", "2011a"), 2)
+    }
+
+    func testResultsAreInNaturalNumericOrder() throws {
+        let all = TeamDirectory.search(try indexed(), query: "")
+        let numbers = all.prefix(40).map(\.number)
+        // "2A" must come before "2011A": a plain string sort puts 2011 first.
+        XCTAssertEqual(numbers, numbers.sorted {
+            $0.compare($1, options: [.numeric, .caseInsensitive]) == .orderedAscending
+        })
+    }
+
+    func testEveryTokenMustMatch() throws {
+        let indexed = try indexed()
+        let team = try XCTUnwrap(indexed.first { ($0.team.organization?.isEmpty == false) }).team
+        let organization = try XCTUnwrap(team.organization)
+        let both = TeamDirectory.search(indexed, query: "\(team.number) \(organization)")
+        XCTAssertTrue(both.contains { $0.id == team.id })
+        // A token that matches nothing empties the result rather than widening.
+        XCTAssertTrue(TeamDirectory.search(indexed, query: "\(team.number) zzzznotathing").isEmpty)
+    }
+
+    func testCountriesNormalizeBeforeTheyGroup() throws {
+        XCTAssertEqual(TeamDirectory.normalizeCountry("USA"), "United States")
+        XCTAssertEqual(TeamDirectory.normalizeCountry("us"), "United States")
+        XCTAssertEqual(TeamDirectory.normalizeCountry("United States of America"), "United States")
+        XCTAssertEqual(TeamDirectory.normalizeCountry("Canada"), "Canada")
+        XCTAssertEqual(TeamDirectory.normalizeCountry(nil), "Unassigned")
+
+        let countries = TeamDirectory.locations(try directory()).countries
+        XCTAssertEqual(Set(countries).count, countries.count)
+        XCTAssertFalse(countries.contains("USA"))
+    }
+
+    func testRegionsAreScopedToTheCountry() throws {
+        let teams = try directory()
+        let country = try XCTUnwrap(TeamDirectory.locations(teams).countries.first)
+        let scoped = TeamDirectory.locations(teams, country: country).regions
+        XCTAssertFalse(scoped.isEmpty)
+        for region in scoped {
+            let rows = TeamDirectory.search(try indexed(), query: "",
+                                            filters: .init(country: country, region: region))
+            XCTAssertFalse(rows.isEmpty, "\(region) in \(country) listed but empty")
+        }
+    }
+
+    func testFiltersCombine() throws {
+        let indexed = try indexed()
+        let all = TeamDirectory.search(indexed, query: "")
+        let country = try XCTUnwrap(TeamDirectory.locations(try directory()).countries.first)
+        let byCountry = TeamDirectory.search(indexed, query: "", filters: .init(country: country))
+        XCTAssertFalse(byCountry.isEmpty)
+        XCTAssertLessThan(byCountry.count, all.count)
+
+        let grade = try XCTUnwrap(byCountry.compactMap(\.grade).first)
+        let both = TeamDirectory.search(indexed, query: "", filters: .init(country: country, grade: grade))
+        XCTAssertTrue(both.allSatisfy { $0.grade == grade })
+        XCTAssertLessThanOrEqual(both.count, byCountry.count)
+    }
+}
+
+extension TeamDirectoryTests {
+    func testAsOfParsesDespiteFractionalSeconds() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/team-directory", withExtension: "json"))
+        let response = try JSONDecoder().decode(TeamDirectoryResponse.self, from: Data(contentsOf: url))
+        // The feed writes milliseconds; the default parser rejects them and the
+        // "updated" line silently disappeared.
+        XCTAssertTrue(response.asOf.contains("."), "this fixture should carry fractional seconds")
+        XCTAssertNotNil(response.updated)
+    }
+}

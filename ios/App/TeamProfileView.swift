@@ -103,12 +103,18 @@ struct TeamProfileView: View {
                     }
                 }
                 Spacer()
+                let standing = ratingStanding
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("LIVE VCR").font(.caption2.weight(.semibold)).tracking(1.5)
+                    Text(standing.label).font(.caption2.weight(.semibold)).tracking(1.5)
                         .foregroundStyle(.secondary)
-                    Text(row.map { "\($0.rating)" } ?? "—")
-                        .font(.system(size: 40, weight: .bold, design: .rounded))
+                    Text(standing.value)
+                        .font(.system(size: standing.rating == nil ? 26 : 40,
+                                      weight: .bold, design: .rounded))
                         .monospacedDigit()
+                    if standing.label == "LIVE VCR", let confidence = row?.confidence {
+                        Text("±\(confidence)").font(.caption2).foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
                 }
             }
         }
@@ -159,6 +165,32 @@ struct TeamProfileView: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Season")
         }
+    }
+
+    /// What the figure beside the team name means.
+    ///
+    /// It used to be labelled "LIVE VCR" unconditionally, which was wrong twice
+    /// over: an unrated team got "LIVE VCR" over a bare dash, and picking an
+    /// earlier season left the *current* rating standing there as if it were
+    /// that season's. The live rating only belongs to the newest season.
+    private var ratingStanding: (label: String, value: String, rating: Int?) {
+        let profile = model.profile
+        let seasons = profile?.seasons ?? []
+        let selected = season ?? seasons.first?.id
+        let isCurrent = selected == nil || selected == seasons.first?.id
+
+        if isCurrent, let row {
+            return ("LIVE VCR", "\(row.rating)", row.rating)
+        }
+        // An earlier season has no live rating, but it does have the rating it
+        // finished on.
+        if let selected,
+           let last = profile?.ratingHistory
+               .filter({ $0.seasonId == selected })
+               .max(by: { ($0.date ?? .distantPast) < ($1.date ?? .distantPast) }) {
+            return ("SEASON END VCR", "\(last.rating)", last.rating)
+        }
+        return ("RANKING STATUS", "Unrated", nil)
     }
 
     private func seasonBand(_ profile: TeamProfileResponse, season: Int?) -> some View {

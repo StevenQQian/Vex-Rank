@@ -1,0 +1,135 @@
+import Foundation
+
+/// Every V5RC team on record - about 56,000 of them, registered and
+/// historical - searchable by number, name or organization.
+///
+/// The search rules are ported from the web's `team-directory.mjs` so the two
+/// clients answer the same query the same way. They are not obvious: searching
+/// "2011" is expected to return the whole numeric family, countries have to be
+/// normalized before they group, and the order puts what you probably meant
+/// first.
+public struct TeamDirectoryResponse: Codable, Sendable {
+    public let asOf: String
+    public let source: String?
+    public let total: Int
+    public let includesInactive: Bool?
+    public let teams: [DirectoryTeam]
+
+    /// `asOf` carries milliseconds ("2026-09-16T15:47:40.805Z"), which the
+    /// default ISO-8601 parser rejects outright - it returned nil and the
+    /// "updated" line silently never appeared. Fractional seconds first, plain
+    /// as the fallback, since only this field is written that way.
+    public var updated: Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return fractional.date(from: asOf) ?? ISO8601DateFormatter().date(from: asOf)
+    }
+}
+
+public struct DirectoryTeam: Codable, Sendable, Identifiable, Hashable {
+    public let id: Int
+    public let number: String
+    public let name: String?
+    public let organization: String?
+    public let country: String?
+    public let region: String?
+    public let city: String?
+    public let grade: String?
+    public let registered: Bool?
+
+    /// City, region and country, skipping the parts that are missing or the
+    /// placeholder the feed uses.
+    public var place: String {
+        [city, region, country]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty && $0 != "Unassigned" }
+            .joined(separator: ", ")
+    }
+}
+
+public enum TeamDirectory {
+    /// The feed spells the United States three ways, and ungrouped they sort
+    /// into three separate menu rows with the teams split between them.
+    public static func normalizeCountry(_ value: String?) -> String {
+        guard let value, !value.isEmpty else { return "Unassigned" }
+        switch value.lowercased() {
+        case "usa", "us", "united states of america": return "United States"
+        default: return value
+        }
+    }
+
+    /// One row's searchable text, lowercased once so a keystroke does not
+    /// re-lower 56,000 teams three fields at a time.
+    public static func haystack(_ team: DirectoryTeam) -> String {
+        "\(team.number) \(team.name ?? "") \(team.organization ?? "")".lowercased()
+    }
+
+    public struct Filters: Sendable, Hashable {
+        public var country: String?
+        public var region: String?
+        public var grade: String?
+
+        public init(country: String? = nil, region: String? = nil, grade: String? = nil) {
+            self.country = country
+            self.region = region
+            self.grade = grade
+        }
+    }
+
+    /// The countries present, and the regions inside `country` when one is
+    /// chosen. Both include inactive teams, which is the point of a directory.
+    public static func locations(_ teams: [DirectoryTeam], country: String? = nil)
+        -> (countries: [String], regions: [String]) {
+        let countries = Set(teams.map { normalizeCountry($0.country) }).sorted()
+        let scoped = country.map { name in
+            teams.filter { normalizeCountry($0.country) == name }
+        } ?? teams
+        let regions = Set(scoped.map { team -> String in
+            guard let region = team.region, !region.isEmpty else { return "Unassigned" }
+            return region
+        }).sorted()
+        return (countries, regions)
+    }
+
+    /// Matching teams, best guess first.
+    ///
+    /// `indexed` is the teams paired with their lowercased haystack.
+    public static func search(_ indexed: [(team: DirectoryTeam, haystack: String)],
+                              query: String,
+                              filters: Filters = Filters()) -> [DirectoryTeam] {
+        let needle = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let tokens = needle.split(whereSeparator: \.isWhitespace).map(String.init)
+
+        let matched = indexed.filter { entry in
+            let team = entry.team
+            if let country = filters.country, normalizeCountry(team.country) != country { return false }
+            if let region = filters.region, (team.region ?? "Unassigned") != region { return false }
+            if let grade = filters.grade, team.grade != grade { return false }
+            // Every token must appear, so "robotics club ohio" narrows rather
+            // than widens. A bare number matches its whole family because the
+            // haystack starts with the number: "2011" is inside "2011a".
+            return tokens.allSatisfy { entry.haystack.contains($0) }
+        }
+
+        return matched
+            .sorted { a, b in
+                let pa = priority(a.team.number, needle), pb = priority(b.team.number, needle)
+                if pa != pb { return pa < pb }
+                let order = a.team.number.compare(b.team.number, options: [.numeric, .caseInsensitive])
+                if order != .orderedSame { return order == .orderedAscending }
+                return a.team.id < b.team.id
+            }
+            .map(\.team)
+    }
+
+    /// An exact number beats a number that starts with the query, which beats
+    /// a match found in a name or an organization. Searching "2011A" should
+    /// not bury 2011A under a club that happens to mention it.
+    static func priority(_ number: String, _ needle: String) -> Int {
+        guard !needle.isEmpty else { return 2 }
+        let lowered = number.lowercased()
+        if lowered == needle { return 0 }
+        if lowered.hasPrefix(needle) { return 1 }
+        return 2
+    }
+}

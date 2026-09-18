@@ -8,7 +8,11 @@ struct VEXRankApp: App {
     @State private var path = NavigationPath()
     @State private var eventPath = NavigationPath()
     @State private var statPath = NavigationPath()
-    @State private var tab = 0
+    @State private var teamsPath = NavigationPath()
+    /// `-tab teams` opens on that tab. Seeded as the State's initial value,
+    /// not assigned on appear, for the same reason the profile's season is:
+    /// an assignment made as the view settles can be lost.
+    @State private var tab = VEXRankApp.launchTab
 
     /// `-team 31260X` opens straight to a profile. Used for verifying the
     /// profile without tapping, and the hook a URL scheme will reuse.
@@ -19,6 +23,15 @@ struct VEXRankApp: App {
     }
 
     private static var launchTeam: String? { launchArgument("-team") }
+
+    private static var launchTab: Int {
+        switch launchArgument("-tab") {
+        case "events": return 1
+        case "stats": return 2
+        case "teams": return 3
+        default: return launchEvent == nil ? 0 : 1
+        }
+    }
     private static var launchEvent: String? { launchArgument("-event") }
 
     var body: some Scene {
@@ -54,10 +67,19 @@ struct VEXRankApp: App {
                 }
                 .tabItem { Label("Stats", systemImage: "chart.bar") }
                 .tag(2)
+
+                NavigationStack(path: $teamsPath) {
+                    TeamsDirectoryView()
+                        .navigationTitle("Teams")
+                        .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
+                        .toolbar { themeMenu }
+                }
+                .tabItem { Label("Teams", systemImage: "person.3") }
+                .tag(3)
             }
             .onAppear {
                 if let team = Self.launchTeam { path.append(team) }
-                if Self.launchEvent != nil { tab = 1 }
             }
             .environment(\.vexTheme, VEXTheme.named(themeID))
             .preferredColorScheme(.dark)

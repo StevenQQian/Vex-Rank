@@ -54,6 +54,13 @@ public actor VEXRankAPI {
         try await get("/api/events?season=\(season)&classification=v49")
     }
 
+    /// The whole directory in one response - about 11 MB and 56,000 teams, so
+    /// it gets the long resource timeout and a single attempt: retrying a
+    /// download that size on a phone connection costs more than it recovers.
+    public func teamDirectory() async throws -> TeamDirectoryResponse {
+        try await get("/api/team-directory", attempts: 1)
+    }
+
     public func skills(season: Int = 204) async throws -> SkillsResponse {
         try await get("/api/skills?season=\(season)")
     }
