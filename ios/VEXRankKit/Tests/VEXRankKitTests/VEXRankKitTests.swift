@@ -1134,3 +1134,76 @@ final class TeamEventMatchTests: XCTestCase {
         XCTAssertNotEqual(plain, plain.focused(on: "663D"))
     }
 }
+
+/// How an event screen organises itself, against a two-division event that
+/// also carries a final-only division.
+final class EventSectionTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    private func multi() throws -> EventDetailResponse {
+        try fixture("event-multi", as: EventDetailResponse.self)
+    }
+
+    func testTheFixtureReallyHasSeveralDivisions() throws {
+        let names = try multi().divisions.map(\.name)
+        XCTAssertEqual(names.count, 3)
+        XCTAssertTrue(names.contains { $0.localizedCaseInsensitiveContains("final") })
+    }
+
+    func testAFinalOnlyDivisionIsNotOfferedUnderRankings() throws {
+        let detail = try multi()
+        let standings = detail.divisions(for: .rankings)
+        XCTAssertEqual(standings.count, 2, "only the two playing divisions have standings")
+        XCTAssertFalse(standings.contains { $0.name.localizedCaseInsensitiveContains("final") })
+        // It does hold matches, so it belongs under the bracket and matches.
+        XCTAssertEqual(detail.divisions(for: .matches).count, 3)
+        XCTAssertTrue(detail.divisions(for: .bracket).contains { $0.name.localizedCaseInsensitiveContains("final") })
+    }
+
+    func testEveryOfferedDivisionHasSomethingToShow() throws {
+        let detail = try multi()
+        for section in EventSection.allCases where section.isPerDivision {
+            for division in detail.divisions(for: section) {
+                switch section {
+                case .rankings: XCTAssertFalse(division.rankings.isEmpty)
+                case .bracket: XCTAssertFalse(division.elimination.isEmpty)
+                case .matches: XCTAssertFalse((division.matches ?? []).isEmpty)
+                default: break
+                }
+            }
+        }
+    }
+
+    func testOnlySectionsWithContentAreOffered() throws {
+        let sections = try multi().availableSections
+        XCTAssertEqual(sections, [.rankings, .bracket, .matches, .awards, .skills, .teams])
+        // Order is stable, so the tab row does not reshuffle between events.
+        XCTAssertEqual(sections, EventSection.allCases.filter { sections.contains($0) })
+    }
+
+    func testAnEventInProgressOffersOnlyWhatItHas() throws {
+        let live = try fixture("event-live", as: EventDetailResponse.self)
+        let sections = live.availableSections
+        XCTAssertTrue(sections.contains(.matches))
+        XCTAssertTrue(sections.contains(.teams))
+        // Skills run before the matches do, and these carry real scores.
+        XCTAssertTrue(sections.contains(.skills))
+        // Nothing has been played, so there is no bracket to draw.
+        XCTAssertFalse(sections.contains(.bracket))
+    }
+
+    func testAwardsWithoutWinnersAreNotOffered() throws {
+        let live = try fixture("event-live", as: EventDetailResponse.self)
+        // The event lists all 18 awards it will give out, none of them won yet.
+        XCTAssertFalse(live.awards.isEmpty)
+        XCTAssertTrue(live.awards.allSatisfy { ($0.teamWinners ?? []).isEmpty })
+        XCTAssertFalse(live.availableSections.contains(.awards),
+                       "a list of categories is not a list of results")
+        // The finished event has real winners and does offer them.
+        let finished = try fixture("event-detail", as: EventDetailResponse.self)
+        XCTAssertTrue(finished.availableSections.contains(.awards))
+    }
+}

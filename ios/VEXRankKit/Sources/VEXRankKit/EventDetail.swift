@@ -279,3 +279,53 @@ extension TeamEvent {
                  isUpcoming: (day ?? .distantPast) > Date())
     }
 }
+
+/// What an event screen can show. Which of these exist, and which divisions
+/// each one spans, is a property of the payload rather than of the view - a
+/// two-division event otherwise stacks standings, a bracket and two match
+/// lists per division, and an upcoming event has nothing but its team list.
+public enum EventSection: String, CaseIterable, Sendable, Identifiable {
+    case rankings = "Rankings"
+    case bracket = "Bracket"
+    case matches = "Matches"
+    case awards = "Awards"
+    case skills = "Skills"
+    case teams = "Teams"
+
+    public var id: String { rawValue }
+
+    /// Whether choosing a division changes what this section shows.
+    public var isPerDivision: Bool { self == .rankings || self == .bracket || self == .matches }
+}
+
+extension EventDetailResponse {
+    /// The divisions that have anything to show under `section`.
+    ///
+    /// Some events carry a final-only division to hold the cross-division
+    /// match: it has no standings, so offering it under Rankings would give
+    /// the reader an empty page.
+    public func divisions(for section: EventSection) -> [Division] {
+        switch section {
+        case .rankings: return divisions.filter { !$0.rankings.isEmpty }
+        case .bracket: return divisions.filter { !$0.elimination.isEmpty }
+        case .matches: return divisions.filter { !($0.matches ?? []).isEmpty }
+        default: return []
+        }
+    }
+
+    /// The sections worth offering, in order. Empty when the event has nothing
+    /// published at all.
+    public var availableSections: [EventSection] {
+        EventSection.allCases.filter { section in
+            switch section {
+            case .rankings, .bracket, .matches: return !divisions(for: section).isEmpty
+            // An event in progress already lists every award it will give
+            // out, all of them without a winner. Offering that as a section
+            // reads as results when it is only a list of categories.
+            case .awards: return awards.contains { !($0.teamWinners ?? []).isEmpty }
+            case .skills: return !skillsLeaderboard.isEmpty
+            case .teams: return !teams.isEmpty
+            }
+        }
+    }
+}
