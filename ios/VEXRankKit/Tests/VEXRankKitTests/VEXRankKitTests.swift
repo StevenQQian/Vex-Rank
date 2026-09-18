@@ -832,3 +832,75 @@ extension TeamDirectoryTests {
         XCTAssertNotNil(response.updated)
     }
 }
+
+/// The elimination bracket. The captured event is a useful case: its round of
+/// 16 has nine matches for eight slots, so replay handling is exercised for
+/// real rather than hypothetically.
+final class BracketTests: XCTestCase {
+    private func division() throws -> Division {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/event-detail", withExtension: "json"))
+        let detail = try JSONDecoder().decode(EventDetailResponse.self, from: Data(contentsOf: url))
+        return try XCTUnwrap(detail.divisions.first)
+    }
+
+    func testRoundsAreEarliestFirstWithFixedSlotCounts() throws {
+        let rounds = try division().bracket
+        XCTAssertEqual(rounds.map(\.label), ["Round of 16", "Quarterfinals", "Semifinals"])
+        XCTAssertEqual(rounds.map { $0.slots.count }, [8, 4, 2])
+    }
+
+    func testAReplayStaysInItsOwnSlot() throws {
+        let rounds = try division().bracket
+        let roundOf16 = try XCTUnwrap(rounds.first)
+        let matches = try division().elimination.filter { $0.round == 6 }
+        XCTAssertEqual(matches.count, 9, "this event replayed one match")
+        // Nine matches, still eight slots: the replay shares a slot rather than
+        // inventing a ninth opponent and shifting the bracket.
+        XCTAssertEqual(roundOf16.slots.count, 8)
+        XCTAssertEqual(roundOf16.played, 8)
+        let replayed = try XCTUnwrap(roundOf16.slots.compactMap { $0 }.first { $0.wasReplayed })
+        XCTAssertEqual(replayed.games.count, 2)
+        // The card shows the last game played, not the first.
+        XCTAssertEqual(replayed.match.matchnum, replayed.games.map(\.matchnum).compactMap { $0 }.max())
+    }
+
+    func testEverySlotHoldsItsOwnInstance() throws {
+        for round in try division().bracket {
+            for (index, slot) in round.slots.enumerated() {
+                guard let slot else { continue }
+                XCTAssertEqual(slot.instance, index + 1)
+                XCTAssertTrue(slot.games.allSatisfy { $0.round == round.id && $0.instance == slot.instance })
+            }
+        }
+    }
+
+    func testFinalSeriesIsCountedByAllianceNotByColour() throws {
+        let final = try XCTUnwrap(try division().final)
+        XCTAssertFalse(final.red.isEmpty)
+        XCTAssertFalse(final.blue.isEmpty)
+        XCTAssertEqual(final.redWins + final.blueWins, final.games.filter { $0.winner != nil }.count)
+        // A decided series has a winner on two, and the winner holds the most.
+        if let winner = final.winner {
+            XCTAssertGreaterThanOrEqual(max(final.redWins, final.blueWins), 2)
+            XCTAssertEqual(winner, final.redWins > final.blueWins ? "red" : "blue")
+        } else {
+            XCTAssertTrue(max(final.redWins, final.blueWins) < 2 || final.redWins == final.blueWins)
+        }
+    }
+
+    func testAllianceKeyIgnoresOrderAndCase() {
+        XCTAssertEqual(Division.allianceKey(["19600Z", "11111y"]),
+                       Division.allianceKey(["11111Y", "19600z"]))
+        XCTAssertNotEqual(Division.allianceKey(["19600Z"]), Division.allianceKey(["19600X"]))
+    }
+
+    func testBracketAndFinalDoNotShareMatches() throws {
+        let division = try division()
+        let inRounds = Set(division.bracket.flatMap { $0.slots.compactMap { $0 }.flatMap { $0.games }.map(\.id) })
+        let inFinal = Set((division.final?.games ?? []).map(\.id))
+        XCTAssertFalse(inRounds.isEmpty)
+        XCTAssertFalse(inFinal.isEmpty)
+        XCTAssertTrue(inRounds.isDisjoint(with: inFinal))
+        XCTAssertEqual(inRounds.count + inFinal.count, division.elimination.count)
+    }
+}

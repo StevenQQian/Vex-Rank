@@ -109,7 +109,14 @@ struct EventDetailView: View {
                     matchSection("\(division.name) · qualification matches",
                                  division.qualification,
                                  key: "qual-\(division.id)")
-                    matchSection("\(division.name) · elimination",
+                    if !division.elimination.isEmpty {
+                        Section("\(division.name) · bracket") {
+                            BracketView(division: division)
+                                .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
+                        }
+                        .listRowBackground(theme.surface)
+                    }
+                    matchSection("\(division.name) · elimination matches",
                                  division.elimination,
                                  key: "elim-\(division.id)")
                 }

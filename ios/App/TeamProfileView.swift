@@ -28,41 +28,38 @@ struct TeamProfileView: View {
     }
 
     var body: some View {
-        // The viewport height is published to the reveal modifier, which needs
-        // to know what "scrolled into view" means.
-        GeometryReader { viewport in
-            ScrollView {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 26) {
+                header
+                // The fade is scoped to the part that actually changes. On
+                // the whole VStack it also covered the signature, and an
+                // implicit animation there replaced the pen's own pending
+                // stroke animations: if the profile arrived mid-write the
+                // writing stopped dead and the number stayed half drawn.
                 VStack(alignment: .leading, spacing: 26) {
-                    header
-                    // The fade is scoped to the part that actually changes. On
-                    // the whole VStack it also covered the signature, and an
-                    // implicit animation there replaced the pen's own pending
-                    // stroke animations: if the profile arrived mid-write the
-                    // writing stopped dead and the number stayed half drawn.
-                    VStack(alignment: .leading, spacing: 26) {
-                        if let profile = model.profile {
-                            let season = season ?? profile.seasons.first?.id
-                            seasonPicker(profile)
-                            seasonBand(profile, season: season).reveal()
-                            let trend = profile.ratingHistory
-                                .filter { season == nil || $0.seasonId == season }
-                            if trend.count > 1 { chart(trend).reveal() }
-                            skills(profile, season: season).reveal()
-                            competitionHistory(profile, season: season).reveal()
-                            awards(profile, season: season).reveal()
-                        } else if let message = model.error {
-                            Text(message).font(.footnote).foregroundStyle(.secondary)
-                        } else {
-                            ProgressView().padding(.vertical, 20)
-                        }
+                    if let profile = model.profile {
+                        let season = season ?? profile.seasons.first?.id
+                        seasonPicker(profile)
+                        seasonBand(profile, season: season).reveal()
+                        let trend = profile.ratingHistory
+                            .filter { season == nil || $0.seasonId == season }
+                        if trend.count > 1 { chart(trend).reveal() }
+                        skills(profile, season: season).reveal()
+                        competitionHistory(profile, season: season).reveal()
+                        awards(profile, season: season).reveal()
+                    } else if let message = model.error {
+                        Text(message).font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        ProgressView().padding(.vertical, 20)
                     }
-                    .animation(.easeOut(duration: 0.45), value: model.profile == nil)
                 }
-                .padding(20)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .animation(.easeOut(duration: 0.45), value: model.profile == nil)
             }
-            .environment(\.revealViewportHeight, viewport.size.height)
-        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+        // Publishes its own visible height to the reveal modifiers inside it.
+        .publishesRevealViewport()
         .background(theme.page)
         .navigationTitle(number)
         .navigationBarTitleDisplayMode(.inline)
