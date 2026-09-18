@@ -533,3 +533,127 @@ final class RatingCurveTests: XCTestCase {
         XCTAssertGreaterThan(RatingCurve.eased(0.5), 0.5)
     }
 }
+
+/// The season-scoped parts of a team profile: the picker's seasons, the
+/// per-event standings and the skills bests.
+final class TeamSeasonTests: XCTestCase {
+    private func profile() throws -> TeamProfileResponse {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/team", withExtension: "json"))
+        return try JSONDecoder().decode(TeamProfileResponse.self, from: Data(contentsOf: url))
+    }
+
+    func testDecodesEventsStandingsAndGrades() throws {
+        let profile = try profile()
+        XCTAssertFalse(try XCTUnwrap(profile.events).isEmpty)
+        XCTAssertFalse(try XCTUnwrap(profile.rankings).isEmpty)
+        XCTAssertFalse(try XCTUnwrap(profile.seasonGrades).isEmpty)
+
+        let standing = try XCTUnwrap(profile.rankings?.first)
+        XCTAssertEqual(standing.record, "\(standing.wins)\u{2013}\(standing.losses)\u{2013}\(standing.ties)")
+    }
+
+    func testSeasonsAreNewestFirstAndUnique() throws {
+        let seasons = try profile().seasons
+        XCTAssertGreaterThan(seasons.count, 1, "this fixture spans more than one season")
+        XCTAssertEqual(seasons.map(\.id), seasons.map(\.id).sorted(by: >))
+        XCTAssertEqual(Set(seasons.map(\.id)).count, seasons.count)
+    }
+
+    func testSeasonNameIsShortenedForThePicker() throws {
+        // "VEX V5 Robotics Competition 2026-2027: Override" is too long for a
+        // picker row; the reader only needs the years and the game.
+        let season = try XCTUnwrap(profile().seasons.first)
+        XCTAssertEqual(season.shortName, "2026\u{2013}27 Override")
+    }
+
+    func testGradeIsReadPerSeason() throws {
+        let profile = try profile()
+        for season in profile.seasons {
+            XCTAssertFalse(profile.grade(forSeason: season.id).isEmpty)
+        }
+        // An unknown season falls back to the identity rather than going blank.
+        XCTAssertEqual(profile.grade(forSeason: -1), profile.team.grade)
+    }
+
+    func testCombinedSkillsComeFromOneEventNotTwo() throws {
+        let runs = try XCTUnwrap(profile().skills)
+        let best = SeasonSkills(runs: runs)
+        XCTAssertGreaterThan(best.combined, 0)
+        // The official standing is the best pair at a single event, so it can
+        // never beat adding the two season bests together.
+        XCTAssertLessThanOrEqual(best.combined, best.driver + best.programming)
+        XCTAssertGreaterThanOrEqual(best.combined, max(best.driver, best.programming))
+    }
+
+    func testPlaceholderEliminationResultIsTreatedAsAbsent() throws {
+        let events = try XCTUnwrap(profile().events)
+        // The API writes "No elimination result" instead of omitting the field,
+        // which would otherwise be printed to the reader as if it were one.
+        for event in events where event.elimination?.localizedCaseInsensitiveContains("no elimination") == true {
+            XCTAssertNil(event.eliminationResult)
+        }
+    }
+}
+
+/// The ranking filters, against the live feed.
+final class RankingFilterTests: XCTestCase {
+    private func teams() throws -> [TeamRanking] {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/rankings", withExtension: "json"))
+        return try JSONDecoder().decode(RankingsResponse.self, from: Data(contentsOf: url)).rankings
+    }
+
+    func testRegionUsesTheEventRegionAndOtherwiseTheFirstComponent() {
+        let base = try? teams().first
+        XCTAssertNotNil(base)
+        // A full "Victoria, Australia" must reduce to "Victoria", or every team
+        // ends up in a region of its own.
+        let teams = try! teams()
+        for team in teams.prefix(50) {
+            guard let region = RankingFilter.regionOf(team) else { continue }
+            XCTAssertFalse(region.contains(","), "expected one component, got \(region)")
+            XCTAssertFalse(region.hasPrefix(" "))
+        }
+    }
+
+    func testEachFilterNarrowsTheField() throws {
+        let teams = try teams()
+        let all = RankingFilter().apply(to: teams)
+        XCTAssertEqual(all.count, teams.count, "an empty filter must not drop anyone")
+
+        let country = try XCTUnwrap(RankingFilter.countries(teams).first)
+        let byCountry = RankingFilter(country: country).apply(to: teams)
+        XCTAssertFalse(byCountry.isEmpty)
+        XCTAssertLessThan(byCountry.count, teams.count)
+        XCTAssertTrue(byCountry.allSatisfy { $0.country == country })
+
+        let region = try XCTUnwrap(RankingFilter.regions(teams, country: country).first)
+        let byRegion = RankingFilter(country: country, region: region).apply(to: teams)
+        XCTAssertFalse(byRegion.isEmpty)
+        XCTAssertLessThanOrEqual(byRegion.count, byCountry.count)
+    }
+
+    func testRegionsAreScopedToTheChosenCountry() throws {
+        let teams = try teams()
+        let country = try XCTUnwrap(RankingFilter.countries(teams).first)
+        let scoped = RankingFilter.regions(teams, country: country)
+        let everywhere = RankingFilter.regions(teams, country: nil)
+        XCTAssertFalse(scoped.isEmpty)
+        XCTAssertLessThan(scoped.count, everywhere.count)
+        // Every scoped region must actually contain teams from that country.
+        for region in scoped {
+            XCTAssertFalse(RankingFilter(country: country, region: region).apply(to: teams).isEmpty)
+        }
+    }
+
+    func testGradeAndSearchCombine() throws {
+        let teams = try teams()
+        let highSchool = RankingFilter(grade: .highSchool).apply(to: teams)
+        XCTAssertTrue(highSchool.allSatisfy { $0.grade == "High School" })
+
+        let leader = try XCTUnwrap(teams.first)
+        let found = RankingFilter(search: leader.number.lowercased()).apply(to: teams)
+        XCTAssertTrue(found.contains { $0.number == leader.number })
+        XCTAssertTrue(RankingFilter(search: "   ").apply(to: teams).count == teams.count,
+                      "whitespace is not a search")
+    }
+}

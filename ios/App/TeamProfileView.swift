@@ -13,6 +13,7 @@ struct TeamProfileView: View {
     private var row: TeamRanking? { ranking ?? model.resolvedRanking }
     @Environment(\.vexTheme) private var theme
     @State private var model = TeamProfileModel()
+    @State private var season: Int?
 
     var body: some View {
         // The viewport height is published to the reveal modifier, which needs
@@ -28,8 +29,15 @@ struct TeamProfileView: View {
                     // writing stopped dead and the number stayed half drawn.
                     VStack(alignment: .leading, spacing: 26) {
                         if let profile = model.profile {
-                            seasonBand(profile).reveal()
-                            if profile.ratingHistory.count > 1 { chart(profile).reveal() }
+                            let season = season ?? profile.seasons.first?.id
+                            seasonPicker(profile)
+                            seasonBand(profile, season: season).reveal()
+                            let trend = profile.ratingHistory
+                                .filter { season == nil || $0.seasonId == season }
+                            if trend.count > 1 { chart(trend).reveal() }
+                            skills(profile, season: season).reveal()
+                            competitionHistory(profile, season: season).reveal()
+                            awards(profile, season: season).reveal()
                         } else if let message = model.error {
                             Text(message).font(.footnote).foregroundStyle(.secondary)
                         } else {
@@ -92,7 +100,24 @@ struct TeamProfileView: View {
         }
     }
 
-    private func seasonBand(_ profile: TeamProfileResponse) -> some View {
+    /// Which season the sections below describe. The web offers the same
+    /// choice; without it the profile silently mixed two seasons' events into
+    /// one list.
+    @ViewBuilder
+    private func seasonPicker(_ profile: TeamProfileResponse) -> some View {
+        let seasons = profile.seasons
+        if seasons.count > 1 {
+            Picker("Season", selection: Binding(
+                get: { season ?? seasons.first!.id },
+                set: { season = $0 }
+            )) {
+                ForEach(seasons) { Text($0.shortName).tag($0.id) }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    private func seasonBand(_ profile: TeamProfileResponse, season: Int?) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("SEASON SUMMARY").font(.caption2.weight(.semibold)).tracking(2)
                 .foregroundStyle(.white.opacity(0.55))
@@ -100,10 +125,12 @@ struct TeamProfileView: View {
 
             let columns = [GridItem(.flexible()), GridItem(.flexible())]
             LazyVGrid(columns: columns, alignment: .leading, spacing: 18) {
+                let events = profile.events?.filter { season == nil || $0.seasonId == season } ?? []
+                let awards = profile.awards?.filter { season == nil || $0.seasonId == season } ?? []
                 metric("Status", profile.team.active ? "Active" : "Inactive",
-                       "\(profile.team.currentSeasonEvents) current-season events")
-                metric("Season events", "\(row?.events ?? profile.team.currentSeasonEvents)", "Official competitions")
-                metric("Record", row?.record ?? "—", "\(row?.matches ?? 0) matches")
+                       season.map { profile.grade(forSeason: $0) } ?? "\(profile.team.currentSeasonEvents) current-season events")
+                metric("Season events", "\(events.count)", "Official competitions")
+                metric("Season awards", "\(awards.count)", "Official award records")
                 metric("Seasons found", "\(profile.team.seasons)", "Complete team history")
             }
         }
@@ -122,13 +149,117 @@ struct TeamProfileView: View {
         }
     }
 
-    private func chart(_ profile: TeamProfileResponse) -> some View {
+    private func chart(_ history: [RatingPoint]) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Tournament rating movement").font(.title3.weight(.semibold))
-            GrowingRatingChart(history: profile.ratingHistory, accent: theme.accent)
+            GrowingRatingChart(history: history, accent: theme.accent)
                 .frame(height: 220)
             Text("The published ranking uses a rolling sample of the season's most recent events, so this line can run ahead of the rating in the table.")
                 .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+}
+
+@available(iOS 17.0, *)
+extension TeamProfileView {
+    private func sectionTitle(_ eyebrow: String, _ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(eyebrow.uppercased()).font(.caption2.weight(.semibold)).tracking(1.6)
+                .foregroundStyle(.secondary)
+            Text(title).font(.title3.weight(.semibold))
+        }
+    }
+
+    private func card<Content: View>(@ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 14, content: content)
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    @ViewBuilder
+    func skills(_ profile: TeamProfileResponse, season: Int?) -> some View {
+        let runs = (profile.skills ?? []).filter { season == nil || $0.seasonId == season }
+        if !runs.isEmpty {
+            let best = SeasonSkills(runs: runs)
+            card {
+                sectionTitle("Robot skills", "Season best skills scores")
+                HStack(alignment: .top, spacing: 14) {
+                    skillMetric("Driver", best.driver, "Highest official driver score")
+                    skillMetric("Programming", best.programming, "Highest official autonomous score")
+                    skillMetric("Combined", best.combined, "Best pair at one event")
+                }
+            }
+        }
+    }
+
+    private func skillMetric(_ label: String, _ value: Int, _ detail: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Divider().overlay(Color.white.opacity(0.18))
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(value > 0 ? "\(value)" : "—")
+                .font(.system(size: 26, weight: .semibold)).monospacedDigit()
+            Text(detail).font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    func competitionHistory(_ profile: TeamProfileResponse, season: Int?) -> some View {
+        let events = (profile.events ?? [])
+            .filter { season == nil || $0.seasonId == season }
+            .sorted { ($0.day ?? .distantPast) > ($1.day ?? .distantPast) }
+        if !events.isEmpty {
+            card {
+                sectionTitle("Competition history", "Events and qualification")
+                ForEach(events) { event in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Divider().overlay(Color.white.opacity(0.18))
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(event.name).font(.subheadline.weight(.medium))
+                            Spacer(minLength: 8)
+                            if let day = event.day {
+                                Text(day.formatted(.dateTime.month(.abbreviated).day()))
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                        }
+                        if let place = event.location, !place.isEmpty {
+                            Text(place).font(.caption).foregroundStyle(.secondary)
+                        }
+                        if let result = event.eliminationResult {
+                            Text(result).font(.caption.weight(.semibold)).foregroundStyle(theme.accent)
+                        }
+                        ForEach(standings(profile, eventID: event.id), id: \.self) { standing in
+                            Text("Qualification #\(standing.rank) · \(standing.record)")
+                                .font(.caption).foregroundStyle(.primary.opacity(0.8))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func standings(_ profile: TeamProfileResponse, eventID: Int) -> [TeamEventStanding] {
+        (profile.rankings ?? []).filter { $0.eventId == eventID }
+    }
+
+    @ViewBuilder
+    func awards(_ profile: TeamProfileResponse, season: Int?) -> some View {
+        let awards = (profile.awards ?? []).filter { season == nil || $0.seasonId == season }
+        if !awards.isEmpty {
+            card {
+                sectionTitle("Official recognition", "Awards")
+                ForEach(Array(awards.enumerated()), id: \.offset) { _, award in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Divider().overlay(Color.white.opacity(0.18))
+                        Text(award.title ?? "Award").font(.subheadline.weight(.medium))
+                        if let event = award.event {
+                            Text(event).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
         }
     }
 }

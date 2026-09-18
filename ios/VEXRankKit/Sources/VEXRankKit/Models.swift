@@ -80,10 +80,89 @@ public struct TeamRanking: Codable, Sendable, Identifiable, Hashable {
 public struct TeamProfileResponse: Codable, Sendable {
     public let team: TeamIdentity
     public let ratingHistory: [RatingPoint]
+    public let events: [TeamEvent]?
+    public let rankings: [TeamEventStanding]?
     public let awards: [Award]?
     public let skills: [SkillRun]?
+    /// Grade can change between seasons (a team moves up), so the API keys it
+    /// by season rather than putting one value on the identity.
+    public let seasonGrades: [String: String]?
     public let modelVersion: String?
     public let loadedSeasonIds: [Int]?
+}
+
+/// The seasons this profile has results for, newest first - what the season
+/// picker offers.
+extension TeamProfileResponse {
+    public struct Season: Identifiable, Sendable, Hashable {
+        public let id: Int
+        public let name: String
+        /// "2026-27 Override" rather than the API's full product name.
+        public var shortName: String {
+            guard let colon = name.lastIndex(of: ":") else { return name }
+            let game = name[name.index(after: colon)...].trimmingCharacters(in: .whitespaces)
+            guard let years = name.range(of: "20[0-9]{2}-20[0-9]{2}", options: .regularExpression) else { return game }
+            let span = name[years].replacingOccurrences(of: "-20", with: "\u{2013}")
+            return "\(span) \(game)"
+        }
+    }
+
+    public var seasons: [Season] {
+        var seen = Set<Int>()
+        var found: [Season] = []
+        // Events first, then the rating history, so a season with results but
+        // no rated event still appears.
+        for (id, name) in (events ?? []).map({ ($0.seasonId, $0.season) })
+            + ratingHistory.map({ ($0.seasonId, $0.event) }) {
+            guard let id, seen.insert(id).inserted else { continue }
+            found.append(Season(id: id, name: name ?? "Season \(id)"))
+        }
+        return found.sorted { $0.id > $1.id }
+    }
+
+    public func grade(forSeason id: Int) -> String {
+        seasonGrades?[String(id)] ?? team.grade
+    }
+}
+
+public struct TeamEvent: Codable, Sendable, Identifiable, Hashable {
+    public let id: Int
+    public let sku: String?
+    public let name: String
+    public let start: String?
+    public let end: String?
+    public let season: String?
+    public let seasonId: Int?
+    public let level: String?
+    public let location: String?
+    /// The API writes "No elimination result" rather than omitting the field.
+    public let elimination: String?
+
+    public var day: Date? { start.flatMap { ISO8601DateFormatter().date(from: $0) } }
+
+    public var eliminationResult: String? {
+        guard let elimination, !elimination.isEmpty,
+              !elimination.localizedCaseInsensitiveContains("no elimination") else { return nil }
+        return elimination
+    }
+}
+
+/// How the team finished qualification at one event.
+public struct TeamEventStanding: Codable, Sendable, Hashable {
+    public let event: String?
+    public let eventId: Int?
+    public let seasonId: Int?
+    public let division: String?
+    public let rank: Int
+    public let wins: Int
+    public let losses: Int
+    public let ties: Int
+    public let wp: Int?
+    public let ap: Int?
+    public let sp: Int?
+    public let highScore: Int?
+
+    public var record: String { "\(wins)\u{2013}\(losses)\u{2013}\(ties)" }
 }
 
 public struct TeamIdentity: Codable, Sendable, Hashable {
@@ -122,12 +201,48 @@ public struct RatingPoint: Codable, Sendable, Identifiable, Hashable {
 public struct Award: Codable, Sendable, Hashable {
     public let title: String?
     public let event: String?
+    public let eventId: Int?
     public let seasonId: Int?
 }
 
 public struct SkillRun: Codable, Sendable, Hashable {
     public let event: String?
+    public let eventId: Int?
     public let type: String?
     public let score: Int?
+    public let attempts: Int?
+    public let rank: Int?
     public let seasonId: Int?
+}
+
+/// A season's best skills scores. Combined is the best driver-plus-programming
+/// at a *single* event, not the sum of two bests from different events - that
+/// is how the official standings read it.
+public struct SeasonSkills: Sendable, Hashable {
+    public let driver: Int
+    public let programming: Int
+    public let combined: Int
+
+    public init(runs: [SkillRun]) {
+        var byEvent: [Int: (driver: Int, programming: Int)] = [:]
+        var bestDriver = 0
+        var bestProgramming = 0
+        for run in runs {
+            guard let score = run.score, score > 0 else { continue }
+            var pair = byEvent[run.eventId ?? -1] ?? (0, 0)
+            switch run.type {
+            case "driver":
+                bestDriver = max(bestDriver, score)
+                pair.driver = max(pair.driver, score)
+            case "programming":
+                bestProgramming = max(bestProgramming, score)
+                pair.programming = max(pair.programming, score)
+            default: continue
+            }
+            byEvent[run.eventId ?? -1] = pair
+        }
+        self.driver = bestDriver
+        self.programming = bestProgramming
+        self.combined = byEvent.values.map { $0.driver + $0.programming }.max() ?? 0
+    }
 }
