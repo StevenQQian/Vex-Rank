@@ -125,7 +125,7 @@ struct EventDetailView: View {
                 // thing there is to show, and the screen previously said only
                 // that the event had not been played.
                 if !detail.teams.isEmpty {
-                    let teams = detail.teams.sorted { $0.number < $1.number }
+                    let teams = detail.teams.sorted { TeamNumber.precedes($0.number, $1.number) }
                     Section("Registered teams") {
                         ForEach(visible(teams, key: "teams")) { team in
                             NavigationLink(value: team.number) {

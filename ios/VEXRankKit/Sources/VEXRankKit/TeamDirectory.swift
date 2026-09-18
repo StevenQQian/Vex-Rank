@@ -115,8 +115,9 @@ public enum TeamDirectory {
             .sorted { a, b in
                 let pa = priority(a.team.number, needle), pb = priority(b.team.number, needle)
                 if pa != pb { return pa < pb }
-                let order = a.team.number.compare(b.team.number, options: [.numeric, .caseInsensitive])
-                if order != .orderedSame { return order == .orderedAscending }
+                if !TeamNumber.same(a.team.number, b.team.number) {
+                    return TeamNumber.precedes(a.team.number, b.team.number)
+                }
                 return a.team.id < b.team.id
             }
             .map(\.team)
@@ -131,5 +132,23 @@ public enum TeamDirectory {
         if lowered == needle { return 0 }
         if lowered.hasPrefix(needle) { return 1 }
         return 2
+    }
+}
+
+/// How team numbers order.
+///
+/// A plain string comparison is wrong for them: it puts "10188S" before
+/// "2731K", because it reaches "0" against "7" at the second character and
+/// stops. Numbers have to be compared as numbers, which is what `.numeric`
+/// does - so every list of teams sorts through here rather than with `<`.
+public enum TeamNumber {
+    public static func precedes(_ a: String, _ b: String) -> Bool {
+        a.compare(b, options: [.numeric, .caseInsensitive]) == .orderedAscending
+    }
+
+    /// Equal under the same rules `precedes` uses, so a tie-break can tell
+    /// "equal" from "before".
+    public static func same(_ a: String, _ b: String) -> Bool {
+        a.compare(b, options: [.numeric, .caseInsensitive]) == .orderedSame
     }
 }

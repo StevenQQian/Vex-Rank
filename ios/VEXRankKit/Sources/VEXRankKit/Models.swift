@@ -25,7 +25,9 @@ public struct RankingsResponse: Codable, Sendable {
     /// instead makes the ratings tidy but prints "#2" above "#1", which no
     /// reader will accept.
     public var sortedForDisplay: [TeamRanking] {
-        rankings.sorted { ($0.rank, $0.number) < ($1.rank, $1.number) }
+        rankings.sorted {
+            $0.rank == $1.rank ? TeamNumber.precedes($0.number, $1.number) : $0.rank < $1.rank
+        }
     }
     public let eventsProcessed: Int
     public let matchesProcessed: Int

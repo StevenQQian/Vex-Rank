@@ -163,7 +163,7 @@ public enum StatLeaders {
         }
         // Ties broken by team number so the order is stable across refreshes.
         rows.sort {
-            $0.value == $1.value ? $0.number < $1.number
+            $0.value == $1.value ? TeamNumber.precedes($0.number, $1.number)
                 : (category.lowerIsBetter ? $0.value < $1.value : $0.value > $1.value)
         }
         return rows

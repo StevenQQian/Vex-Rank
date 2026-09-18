@@ -904,3 +904,56 @@ final class BracketTests: XCTestCase {
         XCTAssertEqual(inRounds.count + inFinal.count, division.elimination.count)
     }
 }
+
+/// Team numbers are not ordinary strings, and every list of them sorts the
+/// same way.
+final class TeamNumberOrderTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    func testDigitsCompareAsNumbersNotAsText() {
+        // The bug this replaces: "10188S" sorted above "2731K" because a string
+        // comparison reaches 0 against 7 and stops.
+        XCTAssertTrue(TeamNumber.precedes("2731K", "10188S"))
+        XCTAssertFalse(TeamNumber.precedes("10188S", "2731K"))
+        XCTAssertTrue(TeamNumber.precedes("2A", "2011A"))
+        XCTAssertTrue(TeamNumber.precedes("2011A", "2011B"))
+        XCTAssertTrue(TeamNumber.same("2011a", "2011A"))
+        XCTAssertFalse(TeamNumber.same("2011A", "2011B"))
+    }
+
+    func testRegisteredTeamsAtAnEventAreInNumericOrder() throws {
+        let detail = try fixture("event-detail", as: EventDetailResponse.self)
+        let sorted = detail.teams.sorted { TeamNumber.precedes($0.number, $1.number) }
+        XCTAssertGreaterThan(sorted.count, 10)
+        for (a, b) in zip(sorted, sorted.dropFirst()) {
+            XCTAssertTrue(TeamNumber.precedes(a.number, b.number) || TeamNumber.same(a.number, b.number),
+                          "\(a.number) should not precede \(b.number)")
+        }
+        // And the order really does differ from a plain string sort on this
+        // event, so the test would fail against the old behaviour.
+        XCTAssertNotEqual(sorted.map(\.number), detail.teams.map(\.number).sorted())
+    }
+
+    func testRankingTiesBreakNumerically() throws {
+        let response = try fixture("rankings", as: RankingsResponse.self)
+        let display = response.sortedForDisplay
+        for (a, b) in zip(display, display.dropFirst()) where a.rank == b.rank {
+            XCTAssertTrue(TeamNumber.precedes(a.number, b.number))
+        }
+    }
+
+    func testStatLeaderTiesBreakNumerically() throws {
+        let teams = try fixture("rankings", as: RankingsResponse.self).rankings
+        let skills = try fixture("skills", as: SkillsResponse.self).rankings
+        for category in StatCategory.all {
+            let rows = StatLeaders.rank(category: category, teams: teams, skills: skills)
+            for (a, b) in zip(rows, rows.dropFirst()) where a.value == b.value {
+                XCTAssertTrue(TeamNumber.precedes(a.number, b.number),
+                              "\(category.id): \(a.number) before \(b.number)")
+            }
+        }
+    }
+}
