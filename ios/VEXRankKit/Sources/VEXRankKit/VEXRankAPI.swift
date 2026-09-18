@@ -65,9 +65,9 @@ public actor VEXRankAPI {
         try await get("/api/skills?season=\(season)")
     }
 
-    public func eventDetail(id: String) async throws -> EventDetailResponse {
+    public func eventDetail(id: String, fresh: Bool = false) async throws -> EventDetailResponse {
         let encoded = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
-        return try await get("/api/events/\(encoded)?results=v49")
+        return try await get("/api/events/\(encoded)?results=v49", fresh: fresh)
     }
 
     public func teamProfile(number: String, season: Int? = nil) async throws -> TeamProfileResponse {
@@ -83,15 +83,29 @@ public actor VEXRankAPI {
     /// The service returns intermittent 502s on cold start - measured on the web
     /// as 502, 200, 200, 200, 200 across five consecutive calls - so a single
     /// failure should not reach the user.
-    private func get<T: Decodable>(_ path: String, attempts: Int = 3) async throws -> T {
+    /// `fresh` is for a reader who has just pulled to refresh at a live event.
+    ///
+    /// It does two things, because there are two caches in the way. URLSession
+    /// is told to ignore what it has, and a unique parameter is added so the
+    /// edge cache sees a key it has never held - the event route is served with
+    /// max-age and stale-while-revalidate, which is right for browsing and far
+    /// too coarse for a match that was scored a minute ago.
+    private func get<T: Decodable>(_ path: String, attempts: Int = 3, fresh: Bool = false) async throws -> T {
+        var path = path
+        if fresh {
+            path += (path.contains("?") ? "&" : "?") + "fresh=\(Int(Date().timeIntervalSince1970 * 1000))"
+        }
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw VEXRankError.unreachable
         }
 
+        var request = URLRequest(url: url)
+        if fresh { request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData }
+
         var lastError: VEXRankError = .unreachable
         for attempt in 0..<attempts {
             do {
-                let (data, response) = try await session.data(from: url)
+                let (data, response) = try await session.data(for: request)
                 let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 
                 if (200..<300).contains(status) {
