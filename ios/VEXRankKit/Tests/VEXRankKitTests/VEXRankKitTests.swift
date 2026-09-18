@@ -1665,3 +1665,44 @@ final class MomentumTests: XCTestCase {
         XCTAssertLessThan(TeamMomentum.range(winning).lowerBound, 0)
     }
 }
+
+extension MomentumTests {
+    func testTheCurveGrowsSmoothlyRatherThanAMatchAtATime() throws {
+        let points = TeamMomentum.points(from: try matches())
+        XCTAssertGreaterThan(points.count, 2)
+
+        XCTAssertTrue(TeamMomentum.growing(points, progress: 0).isEmpty, "it grows from nothing")
+        let full = TeamMomentum.growing(points, progress: 1)
+        XCTAssertEqual(full.count, points.count)
+        XCTAssertTrue(full.allSatisfy { $0.point != nil }, "a finished curve is all real matches")
+
+        // Part way along the first segment: the tip is interpolated, sits
+        // between two matches, and carries no dot.
+        let step = 0.5 / Double(points.count - 1)
+        let partial = TeamMomentum.growing(points, progress: step)
+        let tip = try XCTUnwrap(partial.last)
+        XCTAssertNil(tip.point)
+        XCTAssertEqual(tip.x, Double(points[0].match) + 0.5, accuracy: 0.0001)
+        XCTAssertEqual(tip.y, (Double(points[0].cumulative) + Double(points[1].cumulative)) / 2, accuracy: 0.0001)
+        XCTAssertTrue(partial.dropLast().allSatisfy { $0.point != nil })
+    }
+
+    func testGrowthIsMonotonicAndClamped() throws {
+        let points = TeamMomentum.points(from: try matches())
+        var previous = 0
+        for step in stride(from: 0.0, through: 1.0, by: 0.05) {
+            let drawn = TeamMomentum.growing(points, progress: step)
+            XCTAssertGreaterThanOrEqual(drawn.count, previous)
+            previous = drawn.count
+        }
+        XCTAssertEqual(TeamMomentum.growing(points, progress: 5).count,
+                       TeamMomentum.growing(points, progress: 1).count)
+        XCTAssertTrue(TeamMomentum.growing(points, progress: -2).isEmpty)
+    }
+
+    func testASingleMatchStillAppears() {
+        let one = [MomentumPoint(id: 1, match: 1, name: "Q1", margin: 12, cumulative: 12, outcome: .won)]
+        XCTAssertTrue(TeamMomentum.growing(one, progress: 0).isEmpty)
+        XCTAssertEqual(TeamMomentum.growing(one, progress: 1).count, 1)
+    }
+}

@@ -45,6 +45,39 @@ public enum TeamMomentum {
         return points
     }
 
+    /// The curve truncated at `progress` (0...1), with the segment in progress
+    /// cut part-way so the line advances smoothly rather than jumping a whole
+    /// match at a time - the same treatment as the season rating curve, which
+    /// matters more here because a team plays about ten matches, not fifty, and
+    /// whole-match steps would read as a slideshow.
+    public static func growing(_ points: [MomentumPoint], progress: Double) -> [(x: Double, y: Double, point: MomentumPoint?)] {
+        guard points.count > 1 else {
+            let clamped = min(1, max(0, progress))
+            return clamped > 0 ? points.map { (Double($0.match), Double($0.cumulative), $0) } : []
+        }
+
+        let clamped = min(1, max(0, progress))
+        guard clamped > 0 else { return [] }
+
+        let position = clamped * Double(points.count - 1)
+        let whole = min(points.count - 1, Int(position))
+        var drawn = points.prefix(whole + 1).map { (Double($0.match), Double($0.cumulative), Optional($0)) }
+
+        let fraction = position - Double(whole)
+        if fraction > 0, whole + 1 < points.count {
+            let from = points[whole]
+            let to = points[whole + 1]
+            // The moving tip is between two matches and is not one, so it
+            // carries no point to put a dot on.
+            drawn.append((
+                Double(from.match) + fraction,
+                Double(from.cumulative) + (Double(to.cumulative) - Double(from.cumulative)) * fraction,
+                nil
+            ))
+        }
+        return drawn
+    }
+
     /// The y range to draw, padded, and always including zero so that being
     /// level is visibly the middle rather than the floor.
     public static func range(_ points: [MomentumPoint]) -> ClosedRange<Double> {

@@ -29,7 +29,7 @@ struct MomentumChart: View {
     }
 
     private func chart(progress: Double) -> some View {
-        let shown = visible(progress)
+        let drawn = TeamMomentum.growing(points, progress: progress)
         return Chart {
             // Level is the reading that matters, so the line for it is drawn
             // whatever the data does.
@@ -37,14 +37,15 @@ struct MomentumChart: View {
                 .foregroundStyle(.white.opacity(0.18))
                 .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 3]))
 
-            ForEach(shown) { point in
-                LineMark(x: .value("Match", point.match), y: .value("Momentum", point.cumulative))
+            ForEach(Array(drawn.enumerated()), id: \.offset) { _, step in
+                LineMark(x: .value("Match", step.x), y: .value("Momentum", step.y))
                     .foregroundStyle(accent)
                     .lineStyle(StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
                     .interpolationMethod(.monotone)
             }
-            ForEach(shown) { point in
-                PointMark(x: .value("Match", point.match), y: .value("Momentum", point.cumulative))
+            // Only settled matches get a dot; the moving tip is not one.
+            ForEach(drawn.compactMap(\.point)) { point in
+                PointMark(x: .value("Match", Double(point.match)), y: .value("Momentum", Double(point.cumulative)))
                     .foregroundStyle(colour(point.outcome))
                     .symbolSize(50)
             }
@@ -64,14 +65,6 @@ struct MomentumChart: View {
                 AxisValueLabel().font(.caption2)
             }
         }
-    }
-
-    /// The points up to `progress`. Whole matches only: a momentum step is a
-    /// result, and half a result is not a thing.
-    private func visible(_ progress: Double) -> [MomentumPoint] {
-        guard !points.isEmpty else { return [] }
-        let shown = Int((min(1, max(0, progress)) * Double(points.count)).rounded(.up))
-        return Array(points.prefix(max(0, shown)))
     }
 
     private func colour(_ outcome: TeamMatch.Outcome) -> Color {
