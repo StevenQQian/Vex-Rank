@@ -16,7 +16,7 @@ struct VEXRankApp: App {
 
     /// `-team 31260X` opens straight to a profile. Used for verifying the
     /// profile without tapping, and the hook a URL scheme will reuse.
-    private static func launchArgument(_ flag: String) -> String? {
+    static func launchArgument(_ flag: String) -> String? {
         guard let index = CommandLine.arguments.firstIndex(of: flag),
               CommandLine.arguments.indices.contains(index + 1) else { return nil }
         return CommandLine.arguments[index + 1]
@@ -40,19 +40,24 @@ struct VEXRankApp: App {
                 NavigationStack(path: $path) {
                     RankingsListView()
                         .navigationTitle("World ranking")
-                        .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
+                        .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Rankings", systemImage: "trophy") }
                 .tag(0)
 
                 NavigationStack(path: $eventPath) {
-                    EventsListView(openEventID: Self.launchEvent, path: $eventPath)
+                    EventsListView(openEventID: Self.launchEvent,
+                                   focusTeam: Self.launchArgument("-focus"),
+                                   openMatches: CommandLine.arguments.contains("-matches"),
+                                   path: $eventPath)
                         .navigationTitle("Events")
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
+                        .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
                         // Reached by tapping a team in a standings or match row.
-                        .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Events", systemImage: "calendar") }
@@ -61,8 +66,9 @@ struct VEXRankApp: App {
                 NavigationStack(path: $statPath) {
                     StatLeadersView()
                         .navigationTitle("Stat leaders")
-                        .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
+                        .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Stats", systemImage: "chart.bar") }
@@ -71,15 +77,23 @@ struct VEXRankApp: App {
                 NavigationStack(path: $teamsPath) {
                     TeamsDirectoryView()
                         .navigationTitle("Teams")
-                        .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
+                        .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Teams", systemImage: "person.3") }
                 .tag(3)
             }
             .onAppear {
-                if let team = Self.launchTeam { path.append(team) }
+                guard let team = Self.launchTeam else { return }
+                // `-team X -from <event>` arrives at the profile the way a
+                // reader does from an event's team list. Only the id is real
+                // here; the screen looks the event up by it anyway.
+                let from = Self.launchArgument("-from").map {
+                    EventRef(id: $0, name: "Event \($0)", day: nil, place: "", isUpcoming: false)
+                }
+                path.append(TeamRef(team, fromEvent: from))
             }
             .environment(\.vexTheme, VEXTheme.named(themeID))
             .preferredColorScheme(.dark)

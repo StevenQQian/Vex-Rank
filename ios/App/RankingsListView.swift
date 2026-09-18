@@ -98,7 +98,7 @@ struct RankingsListView: View {
     private func list(_ teams: [TeamRanking]) -> some View {
         // No pagination cap: List recycles rows, so all 585 cost the same as 20.
         List(teams) { team in
-            NavigationLink(value: team.number) { row(team) }
+            NavigationLink(value: TeamRef(team.number)) { row(team) }
                 .listRowBackground(theme.surface)
         }
         .listStyle(.plain)

@@ -1,7 +1,12 @@
 import Foundation
 
-/// A match a team is scheduled to play but has not played yet.
-public struct UpcomingMatch: Identifiable, Sendable, Hashable {
+/// One match at an event, read from a particular team's point of view: their
+/// side, their partners, who they faced, and how it went for them.
+public struct TeamMatch: Identifiable, Sendable, Hashable {
+    public enum Outcome: String, Sendable {
+        case won, lost, tied, scheduled
+    }
+
     public let id: Int
     public let name: String
     public let field: String?
@@ -12,6 +17,35 @@ public struct UpcomingMatch: Identifiable, Sendable, Hashable {
     /// The team's alliance partners, the team itself excluded.
     public let partners: [String]
     public let opponents: [String]
+    /// Scores from this team's side, so "for" is always theirs.
+    public let scoreFor: Int?
+    public let scoreAgainst: Int?
+    public let isPlayed: Bool
+
+    public var outcome: Outcome {
+        guard isPlayed, let scoreFor, let scoreAgainst else { return .scheduled }
+        if scoreFor > scoreAgainst { return .won }
+        if scoreFor < scoreAgainst { return .lost }
+        return .tied
+    }
+}
+
+/// A team's wins, losses and ties at one event.
+public struct TeamEventRecord: Sendable, Hashable {
+    public let wins: Int
+    public let losses: Int
+    public let ties: Int
+    public let remaining: Int
+
+    public var played: Int { wins + losses + ties }
+    public var summary: String { "\(wins)\u{2013}\(losses)\u{2013}\(ties)" }
+
+    public init(matches: [TeamMatch]) {
+        wins = matches.filter { $0.outcome == .won }.count
+        losses = matches.filter { $0.outcome == .lost }.count
+        ties = matches.filter { $0.outcome == .tied }.count
+        remaining = matches.filter { !$0.isPlayed }.count
+    }
 }
 
 extension TeamEvent {
@@ -42,15 +76,14 @@ extension TeamProfileResponse {
 }
 
 extension EventDetailResponse {
-    /// The matches `number` has still to play, in the order they will be
-    /// played. Empty once the team's schedule is done, which is what the
-    /// profile checks before showing anything.
-    public func upcomingMatches(for number: String) -> [UpcomingMatch] {
+    /// Every match `number` is in at this event, played and scheduled, in the
+    /// order they are played.
+    public func matches(for number: String) -> [TeamMatch] {
         let wanted = number.uppercased()
-        var found: [UpcomingMatch] = []
+        var found: [TeamMatch] = []
 
         for division in divisions {
-            for match in division.matches ?? [] where !match.isPlayed {
+            for match in division.matches ?? [] {
                 let red = match.red?.numbers ?? []
                 let blue = match.blue?.numbers ?? []
                 let onRed = red.contains { $0.uppercased() == wanted }
@@ -58,7 +91,8 @@ extension EventDetailResponse {
                 guard onRed || onBlue else { continue }
 
                 let mine = onRed ? red : blue
-                found.append(UpcomingMatch(
+                let played = match.isPlayed
+                found.append(TeamMatch(
                     id: match.id,
                     name: match.name ?? "Match",
                     field: match.field,
@@ -66,7 +100,13 @@ extension EventDetailResponse {
                     division: division.name,
                     colour: onRed ? "red" : "blue",
                     partners: mine.filter { $0.uppercased() != wanted },
-                    opponents: onRed ? blue : red
+                    opponents: onRed ? blue : red,
+                    // Only a played match has scores worth reading; an unplayed
+                    // one carries 0 against 0, which would read as a nil-all
+                    // draw rather than as a fixture.
+                    scoreFor: played ? (onRed ? match.red?.score : match.blue?.score) : nil,
+                    scoreAgainst: played ? (onRed ? match.blue?.score : match.red?.score) : nil,
+                    isPlayed: played
                 ))
             }
         }
@@ -78,5 +118,11 @@ extension EventDetailResponse {
             if (a.scheduled == nil) != (b.scheduled == nil) { return a.scheduled != nil }
             return a.id < b.id
         }
+    }
+
+    /// The matches `number` has still to play. Empty once their schedule is
+    /// done, which is what the profile checks before showing anything.
+    public func upcomingMatches(for number: String) -> [TeamMatch] {
+        matches(for: number).filter { !$0.isPlayed }
     }
 }

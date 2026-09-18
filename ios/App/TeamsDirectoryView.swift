@@ -96,7 +96,7 @@ struct TeamsDirectoryView: View {
 
     private func list(_ teams: [DirectoryTeam]) -> some View {
         List(teams) { team in
-            NavigationLink(value: team.number) {
+            NavigationLink(value: TeamRef(team.number)) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text(team.number).font(.headline)

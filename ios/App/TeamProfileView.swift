@@ -4,7 +4,8 @@ import VEXRankKit
 
 @available(iOS 17.0, *)
 struct TeamProfileView: View {
-    let number: String
+    let ref: TeamRef
+    var number: String { ref.number }
     /// Present when arriving from the list; absent on a deep link, where the
     /// profile fetch supplies everything.
     var ranking: TeamRanking?
@@ -39,6 +40,7 @@ struct TeamProfileView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     if let profile = model.profile {
                         let season = season ?? profile.seasons.first?.id
+                        originPortal
                         upcoming
                         seasonPicker(profile)
                         seasonBand(profile, season: season).reveal()
@@ -65,7 +67,7 @@ struct TeamProfileView: View {
         .navigationTitle(number)
         .navigationBarTitleDisplayMode(.inline)
         .task {
-            await model.load(number: number, ranking: ranking)
+            await model.load(ref: ref, ranking: ranking)
         }
     }
 
@@ -191,6 +193,32 @@ struct TeamProfileView: View {
         return ("RANKING STATUS", "Unrated", nil)
     }
 
+    /// The way back into this team's matches at the event the reader came
+    /// from - the same portal the event screen offers in the other direction,
+    /// so the pair of screens is symmetric however you got to them.
+    @ViewBuilder
+    private var originPortal: some View {
+        if let event = ref.fromEvent, model.hasOriginMatches {
+            NavigationLink(value: TeamEventRef(event: event, team: number)) {
+                HStack(spacing: 10) {
+                    Image(systemName: "list.bullet.rectangle")
+                        .foregroundStyle(theme.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Matches at this event").font(.subheadline.weight(.medium))
+                        Text(event.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     /// What this team still has to play at the competition it is at right now.
     /// Nothing is drawn when they are not at one, or when their schedule is
     /// done - which is most of the time, so it must not leave a gap.
@@ -201,7 +229,7 @@ struct TeamProfileView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text("UP NEXT").font(.caption2.weight(.semibold)).tracking(1.6)
                         .foregroundStyle(theme.accent)
-                    NavigationLink(value: event.ref) {
+                    NavigationLink(value: event.ref.focused(on: number)) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(event.name).font(.subheadline.weight(.medium)).lineLimit(2)
                             Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
@@ -353,7 +381,7 @@ extension TeamProfileView {
                 ForEach(events) { event in
                     VStack(alignment: .leading, spacing: 5) {
                         Divider().overlay(Color.white.opacity(0.18))
-                        NavigationLink(value: event.ref) {
+                        NavigationLink(value: event.ref.focused(on: number)) {
                             HStack(alignment: .firstTextBaseline) {
                                 Text(event.name).font(.subheadline.weight(.medium))
                                 Spacer(minLength: 8)
@@ -420,7 +448,8 @@ final class TeamProfileModel {
     /// The competition the team is at right now, and what they have left to
     /// play there. Both empty unless an event is actually running.
     private(set) var currentEvent: TeamEvent?
-    private(set) var upcomingMatches: [UpcomingMatch] = []
+    private(set) var upcomingMatches: [TeamMatch] = []
+    private(set) var hasOriginMatches = false
     private let api = VEXRankAPI()
 
     /// Fetched separately and allowed to fail quietly: the schedule is a bonus
@@ -436,13 +465,24 @@ final class TeamProfileModel {
         upcomingMatches = matches
     }
 
+    /// Whether the event the reader arrived from lists any match for this
+    /// team, which decides if the way back into them is offered.
     @MainActor
-    func load(number: String, ranking: TeamRanking?) async {
+    private func loadOrigin(_ ref: TeamRef) async {
+        guard let event = ref.fromEvent else { return }
+        guard let detail = try? await api.eventDetail(id: event.id) else { return }
+        hasOriginMatches = !detail.matches(for: ref.number).isEmpty
+    }
+
+    @MainActor
+    func load(ref: TeamRef, ranking: TeamRanking?) async {
         guard profile == nil else { return }
+        let number = ref.number
         do { profile = try await api.teamProfile(number: number) }
         catch { self.error = error.localizedDescription }
 
         await loadUpcoming(number: number)
+        await loadOrigin(ref)
 
         guard ranking == nil else { return }
         // Best effort: a team outside the published ranking simply has none.

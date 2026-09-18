@@ -6,6 +6,12 @@ struct EventsListView: View {
     /// Set by the -event launch argument; resolved against the feed once it
     /// loads, since the detail view needs the whole event, not just an id.
     var openEventID: String? = nil
+    /// `-focus <team>` opens the event as if arrived at from that team's
+    /// profile, and `-matches` goes straight on to their match list. The same
+    /// kind of hook as `-team`: these screens are two taps deep and tapping is
+    /// how they would otherwise have to be reached.
+    var focusTeam: String? = nil
+    var openMatches = false
     var path: Binding<NavigationPath>? = nil
 
     @Environment(\.vexTheme) private var theme
@@ -35,7 +41,14 @@ struct EventsListView: View {
             if case .loaded(let events) = model.state,
                let id = openEventID,
                let match = events.first(where: { $0.id == id }) {
-                path?.wrappedValue.append(match.ref)
+                let ref = focusTeam.map { match.ref.focused(on: $0) } ?? match.ref
+                // One push, not two: appending both at once leaves the stack
+                // reconciling a value whose parent has not rendered yet.
+                if openMatches, let team = focusTeam {
+                    path?.wrappedValue.append(TeamEventRef(event: ref, team: team))
+                } else {
+                    path?.wrappedValue.append(ref)
+                }
             }
         }
     }

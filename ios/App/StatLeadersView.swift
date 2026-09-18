@@ -109,7 +109,7 @@ struct StatLeadersView: View {
         List {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 if row.opensProfile {
-                    NavigationLink(value: row.number) { cell(index: index, row: row) }
+                    NavigationLink(value: TeamRef(row.number)) { cell(index: index, row: row) }
                         .listRowBackground(theme.surface)
                 } else {
                     cell(index: index, row: row).listRowBackground(theme.surface)

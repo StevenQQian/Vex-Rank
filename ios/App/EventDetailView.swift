@@ -32,6 +32,18 @@ struct EventDetailView: View {
             }
             .listRowBackground(theme.surface)
 
+            // Only when the reader arrived from a team's profile, and only when
+            // that team is actually in this event's schedule.
+            if let team = event.focusTeam, model.hasMatches(for: team) {
+                Section {
+                    NavigationLink(value: TeamEventRef(event: event, team: team)) {
+                        Label("\(team)'s matches at this event", systemImage: "list.bullet.rectangle")
+                            .font(.subheadline.weight(.medium))
+                    }
+                }
+                .listRowBackground(theme.surface)
+            }
+
             if let detail = model.detail {
                 ForEach(detail.divisions) { division in
                     if !division.rankings.isEmpty {
@@ -42,7 +54,7 @@ struct EventDetailView: View {
                                 // The whole row is the link, so the disclosure
                                 // sits at the trailing edge instead of landing
                                 // between the number and the record.
-                                NavigationLink(value: row.team.name) {
+                                NavigationLink(value: TeamRef(row.team.name, fromEvent: event)) {
                                     HStack {
                                         Text("#\(row.rank)")
                                             .font(.subheadline.weight(.semibold))
@@ -128,7 +140,7 @@ struct EventDetailView: View {
                     let teams = detail.teams.sorted { TeamNumber.precedes($0.number, $1.number) }
                     Section("Registered teams") {
                         ForEach(visible(teams, key: "teams")) { team in
-                            NavigationLink(value: team.number) {
+                            NavigationLink(value: TeamRef(team.number, fromEvent: event)) {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(team.number).font(.subheadline.weight(.medium))
                                     if let name = team.name, !name.isEmpty {
@@ -244,6 +256,13 @@ final class EventDetailModel {
     private(set) var detail: EventDetailResponse?
     private(set) var error: String?
     private let api = VEXRankAPI()
+
+    /// Whether this event lists any match for `team`, which decides if the
+    /// button is offered at all.
+    func hasMatches(for team: String) -> Bool {
+        guard let detail else { return false }
+        return !detail.matches(for: team).isEmpty
+    }
 
     @MainActor
     func load(id: String, force: Bool = false) async {

@@ -215,13 +215,55 @@ public struct EventRef: Sendable, Hashable, Identifiable {
     public let day: Date?
     public let place: String
     public let isUpcoming: Bool
+    /// The team whose profile the reader came from, when they came from one.
+    /// The event screen offers that team's matches behind a button rather than
+    /// listing them: the screen is about the event, not about one team in it.
+    public let focusTeam: String?
 
-    public init(id: String, name: String, day: Date?, place: String, isUpcoming: Bool) {
+    public init(id: String, name: String, day: Date?, place: String,
+                isUpcoming: Bool, focusTeam: String? = nil) {
         self.id = id
         self.name = name
         self.day = day
         self.place = place
         self.isUpcoming = isUpcoming
+        self.focusTeam = focusTeam
+    }
+
+    public func focused(on team: String) -> EventRef {
+        EventRef(id: id, name: name, day: day, place: place,
+                 isUpcoming: isUpcoming, focusTeam: team)
+    }
+}
+
+/// A team to open, and where the reader came from.
+///
+/// Navigating by the bare number lost that context, so a profile opened from
+/// an event could not offer the way back into that team's matches there. The
+/// origin travels with the destination instead of being inferred.
+public struct TeamRef: Sendable, Hashable, Identifiable {
+    public let number: String
+    /// The event whose team list the reader came from, when they came from one.
+    public let fromEvent: EventRef?
+
+    public var id: String { "\(number)-\(fromEvent?.id ?? "")" }
+
+    public init(_ number: String, fromEvent: EventRef? = nil) {
+        self.number = number
+        self.fromEvent = fromEvent
+    }
+}
+
+/// One team's matches at one event - a screen of its own, reached from the
+/// event by a button.
+public struct TeamEventRef: Sendable, Hashable, Identifiable {
+    public let event: EventRef
+    public let team: String
+    public var id: String { "\(event.id)-\(team)" }
+
+    public init(event: EventRef, team: String) {
+        self.event = event
+        self.team = team
     }
 }
 

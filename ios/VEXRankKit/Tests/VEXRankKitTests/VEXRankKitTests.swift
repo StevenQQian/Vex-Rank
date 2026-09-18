@@ -1043,3 +1043,94 @@ final class UpcomingMatchTests: XCTestCase {
         XCTAssertTrue(finished.upcomingMatches(for: played).isEmpty)
     }
 }
+
+/// A team's matches at one event, read from that team's side.
+final class TeamEventMatchTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    /// The completed event, where results exist to be read.
+    private func finished() throws -> EventDetailResponse {
+        try fixture("event-detail", as: EventDetailResponse.self)
+    }
+
+    private func aTeamThatPlayed() throws -> String {
+        try XCTUnwrap(finished().divisions.first?.rankings.first?.team.name)
+    }
+
+    func testScoresAreOrientedToTheTeam() throws {
+        let team = try aTeamThatPlayed()
+        let matches = try finished().matches(for: team)
+        XCTAssertFalse(matches.isEmpty)
+
+        let raw = try XCTUnwrap(finished().divisions.first?.matches)
+        for match in matches where match.isPlayed {
+            let source = try XCTUnwrap(raw.first { $0.id == match.id })
+            let mine = match.colour == "red" ? source.red?.score : source.blue?.score
+            let theirs = match.colour == "red" ? source.blue?.score : source.red?.score
+            // "For" is always this team's score whichever side they were on.
+            XCTAssertEqual(match.scoreFor, mine)
+            XCTAssertEqual(match.scoreAgainst, theirs)
+        }
+    }
+
+    func testOutcomeFollowsTheScores() throws {
+        for match in try finished().matches(for: try aTeamThatPlayed()) {
+            guard match.isPlayed, let mine = match.scoreFor, let theirs = match.scoreAgainst else {
+                XCTAssertEqual(match.outcome, .scheduled)
+                continue
+            }
+            XCTAssertEqual(match.outcome, mine > theirs ? .won : mine < theirs ? .lost : .tied)
+        }
+    }
+
+    func testAnUnplayedMatchCarriesNoScore() throws {
+        let live = try fixture("event-live", as: EventDetailResponse.self)
+        let matches = live.matches(for: "663D")
+        XCTAssertFalse(matches.isEmpty)
+        // The feed sends 0 against 0 for a fixture; reading that as a score
+        // would print every upcoming match as a nil-all draw.
+        for match in matches {
+            XCTAssertFalse(match.isPlayed)
+            XCTAssertNil(match.scoreFor)
+            XCTAssertNil(match.scoreAgainst)
+            XCTAssertEqual(match.outcome, .scheduled)
+        }
+    }
+
+    func testRecordCountsWhatWasPlayedAndWhatIsLeft() throws {
+        let team = try aTeamThatPlayed()
+        let matches = try finished().matches(for: team)
+        let record = TeamEventRecord(matches: matches)
+        XCTAssertEqual(record.played, matches.filter(\.isPlayed).count)
+        XCTAssertEqual(record.remaining, matches.filter { !$0.isPlayed }.count)
+        XCTAssertEqual(record.wins + record.losses + record.ties, record.played)
+        XCTAssertEqual(record.summary, "\(record.wins)\u{2013}\(record.losses)\u{2013}\(record.ties)")
+
+        // At the live event nothing has been played, so it is all remaining.
+        let live = TeamEventRecord(matches: try fixture("event-live", as: EventDetailResponse.self)
+            .matches(for: "663D"))
+        XCTAssertEqual(live.played, 0)
+        XCTAssertGreaterThan(live.remaining, 0)
+    }
+
+    func testUpcomingIsTheUnplayedPartOfTheSameList() throws {
+        let live = try fixture("event-live", as: EventDetailResponse.self)
+        XCTAssertEqual(live.upcomingMatches(for: "663D").map(\.id),
+                       live.matches(for: "663D").filter { !$0.isPlayed }.map(\.id))
+        // A finished event has a history but nothing upcoming.
+        let team = try aTeamThatPlayed()
+        XCTAssertFalse(try finished().matches(for: team).isEmpty)
+        XCTAssertTrue(try finished().upcomingMatches(for: team).isEmpty)
+    }
+
+    func testFocusIsCarriedOnTheEventReference() {
+        let plain = EventRef(id: "1", name: "Event", day: nil, place: "", isUpcoming: false)
+        XCTAssertNil(plain.focusTeam)
+        XCTAssertEqual(plain.focused(on: "663D").focusTeam, "663D")
+        // Focus is part of identity, so the two are different destinations.
+        XCTAssertNotEqual(plain, plain.focused(on: "663D"))
+    }
+}
