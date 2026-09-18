@@ -13,6 +13,7 @@ struct TeamProfileView: View {
     /// From the list when present, otherwise resolved by the model.
     private var row: TeamRanking? { ranking ?? model.resolvedRanking }
     @Environment(\.vexTheme) private var theme
+    @Environment(\.favouriteTeams) private var favourites
     @State private var model = TeamProfileModel()
     /// Seeded at init rather than assigned in `.task`: the view is recreated
     /// as the profile loads, and an assignment made from the task raced that -
@@ -66,6 +67,17 @@ struct TeamProfileView: View {
         .background(theme.page)
         .navigationTitle(number)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    favourites.toggle(FavouriteTeam(number: number, name: model.profile?.team.name))
+                } label: {
+                    Image(systemName: favourites.contains(number) ? "star.fill" : "star")
+                        .foregroundStyle(theme.accent)
+                }
+                .accessibilityLabel(favourites.contains(number) ? "Remove from favourites" : "Add to favourites")
+            }
+        }
         .task {
             await model.load(ref: ref, ranking: ranking)
         }

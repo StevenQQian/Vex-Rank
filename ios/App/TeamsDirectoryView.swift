@@ -6,8 +6,16 @@ import VEXRankKit
 @available(iOS 17.0, *)
 struct TeamsDirectoryView: View {
     @Environment(\.vexTheme) private var theme
+    @Environment(\.favouriteTeams) private var favourites
     @State private var model = TeamsDirectoryModel()
+    @State private var scope: Scope = .favourites
     @State private var query = ""
+
+    enum Scope: String, CaseIterable, Identifiable {
+        case favourites = "Favourites"
+        case all = "All teams"
+        var id: String { rawValue }
+    }
     @State private var country: String?
     @State private var region: String?
     @State private var grade: String?
@@ -15,6 +23,83 @@ struct TeamsDirectoryView: View {
     private static let grades = ["High School", "Middle School"]
 
     var body: some View {
+        Group {
+            if scope == .favourites {
+                favouritesList
+            } else {
+                directory
+            }
+        }
+        .animation(.easeOut(duration: 0.25), value: scope)
+        .background(theme.page)
+        .searchable(text: $query, prompt: scope == .favourites
+                    ? "Search your teams" : "Team number, name or organization")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                Picker("Scope", selection: $scope) {
+                    ForEach(Scope.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                Divider()
+            }
+            .background(theme.page)
+        }
+    }
+
+    /// The reader's own teams, drawn from what is stored on the device, so it
+    /// is on screen immediately - the directory takes seconds to arrive and a
+    /// shortcut that waits for it is not a shortcut.
+    @ViewBuilder
+    private var favouritesList: some View {
+        let shown = favourites.teams.filter { team in
+            let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
+            return needle.isEmpty
+                || team.number.lowercased().contains(needle)
+                || (team.name ?? "").lowercased().contains(needle)
+        }
+        if favourites.teams.isEmpty {
+            ContentUnavailableView {
+                Label("No favourite teams yet", systemImage: "star")
+            } description: {
+                Text("Star a team from its profile, or swipe a row in All teams, and it will be waiting here.")
+            } actions: {
+                Button("Browse all teams") { scope = .all }
+                    .buttonStyle(.borderedProminent)
+                    .tint(theme.accent)
+            }
+        } else if shown.isEmpty {
+            ContentUnavailableView.search(text: query)
+        } else {
+            List {
+                ForEach(shown) { team in
+                    NavigationLink(value: TeamRef(team.number)) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(team.number).font(.headline)
+                            if let name = team.name, !name.isEmpty {
+                                Text(name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                    .listRowBackground(theme.surface)
+                    .swipeActions {
+                        Button(role: .destructive) {
+                            favourites.remove(team.number)
+                        } label: {
+                            Label("Remove", systemImage: "star.slash")
+                        }
+                    }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+        }
+    }
+
+    @ViewBuilder
+    private var directory: some View {
         Group {
             switch model.state {
             case .loading:
@@ -50,8 +135,6 @@ struct TeamsDirectoryView: View {
             }
         }
         .animation(.easeOut(duration: 0.35), value: model.state.isLoaded)
-        .background(theme.page)
-        .searchable(text: $query, prompt: "Team number, name or organization")
         .task { await model.load() }
     }
 
@@ -116,6 +199,15 @@ struct TeamsDirectoryView: View {
                 .padding(.vertical, 2)
             }
             .listRowBackground(theme.surface)
+            .swipeActions {
+                Button {
+                    favourites.toggle(FavouriteTeam(number: team.number, name: team.name))
+                } label: {
+                    Label(favourites.contains(team.number) ? "Unstar" : "Star",
+                          systemImage: favourites.contains(team.number) ? "star.slash" : "star")
+                }
+                .tint(theme.accent)
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)

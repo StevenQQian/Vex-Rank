@@ -13,6 +13,7 @@ struct VEXRankApp: App {
     /// not assigned on appear, for the same reason the profile's season is:
     /// an assignment made as the view settles can be lost.
     @State private var tab = VEXRankApp.launchTab
+    @State private var favourites = FavouriteTeams()
 
     /// `-team 31260X` opens straight to a profile. Used for verifying the
     /// profile without tapping, and the hook a URL scheme will reuse.
@@ -95,6 +96,7 @@ struct VEXRankApp: App {
                 }
                 path.append(TeamRef(team, fromEvent: from))
             }
+            .environment(\.favouriteTeams, favourites)
             .environment(\.vexTheme, VEXTheme.named(themeID))
             .preferredColorScheme(.dark)
             .tint(VEXTheme.named(themeID).accent)
