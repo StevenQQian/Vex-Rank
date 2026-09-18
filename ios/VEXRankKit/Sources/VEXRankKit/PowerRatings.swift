@@ -120,3 +120,106 @@ extension Division {
         return solution
     }
 }
+
+
+/// How a team stands at one event: where it is seeded, what it has done, and
+/// what its matches say about its contribution.
+public struct EventStanding: Sendable, Hashable {
+    public let division: String
+    public let rank: Int
+    public let wins: Int
+    public let losses: Int
+    public let ties: Int
+    public let wp: Int?
+    public let ap: Int?
+    public let sp: Int?
+    public let highScore: Int?
+    /// Absent until the event has played enough matches to fit them.
+    public let stats: TeamEventStats?
+
+    public var record: String { "\(wins)\u{2013}\(losses)\u{2013}\(ties)" }
+}
+
+extension EventDetailResponse {
+    /// The team's standing in whichever division it plays in, or nil when it
+    /// has not been seeded - a team can be registered without appearing in the
+    /// standings before its first match is scored.
+    public func standing(for number: String) -> EventStanding? {
+        let wanted = number.uppercased()
+        for division in divisions {
+            guard let row = division.rankings.first(where: { $0.team.name.uppercased() == wanted })
+            else { continue }
+            return EventStanding(
+                division: division.name,
+                rank: row.rank,
+                wins: row.wins, losses: row.losses, ties: row.ties,
+                wp: row.wp, ap: row.ap, sp: row.sp, highScore: row.highScore,
+                stats: division.powerRatings()[wanted]
+            )
+        }
+        return nil
+    }
+}
+
+/// How to order a division's qualification standings.
+public enum StandingSort: String, CaseIterable, Sendable, Identifiable {
+    case rank = "Rank"
+    case wp = "WP"
+    case ap = "AP"
+    case sp = "SP"
+    case high = "High"
+    case opr = "OPR"
+    case dpr = "DPR"
+    case ccwm = "CCWM"
+
+    public var id: String { rawValue }
+
+    /// DPR counts the points a team's opponents score, so the best value is
+    /// the smallest one - and seeding rank is already "1 is best". Everything
+    /// else reads higher-is-better.
+    public var ascending: Bool { self == .dpr || self == .rank }
+
+    /// The three fitted figures exist only once an event has played enough to
+    /// support them, so they are not always offered.
+    public var needsRatings: Bool { self == .opr || self == .dpr || self == .ccwm }
+}
+
+extension Division {
+    /// Standings in the reader's chosen order.
+    ///
+    /// A team with no value for the chosen column - unrated, or missing a
+    /// figure the API did not send - sorts to the end rather than to the top,
+    /// whichever direction the column runs.
+    public func standings(by sort: StandingSort,
+                          ratings: [String: TeamEventStats] = [:]) -> [DivisionRanking] {
+        func value(_ row: DivisionRanking) -> Double? {
+            switch sort {
+            case .rank: return Double(row.rank)
+            case .wp: return row.wp.map(Double.init)
+            case .ap: return row.ap.map(Double.init)
+            case .sp: return row.sp.map(Double.init)
+            case .high: return row.highScore.map(Double.init)
+            case .opr: return ratings[row.team.name.uppercased()]?.opr
+            case .dpr: return ratings[row.team.name.uppercased()]?.dpr
+            case .ccwm: return ratings[row.team.name.uppercased()]?.ccwm
+            }
+        }
+
+        return rankings.sorted { a, b in
+            switch (value(a), value(b)) {
+            case let (x?, y?):
+                if x == y { return a.rank < b.rank }
+                return sort.ascending ? x < y : x > y
+            case (nil, nil): return a.rank < b.rank
+            case (nil, _): return false
+            case (_, nil): return true
+            }
+        }
+    }
+
+    /// The orders worth offering for this division.
+    public func availableSorts() -> [StandingSort] {
+        let rated = !powerRatings().isEmpty
+        return StandingSort.allCases.filter { rated || !$0.needsRatings }
+    }
+}

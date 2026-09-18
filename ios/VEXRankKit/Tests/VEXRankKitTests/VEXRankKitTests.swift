@@ -1362,3 +1362,306 @@ final class PowerRatingTests: XCTestCase {
         XCTAssertNil(Division.solve([[1, 2], [2, 4]], [3, 6]))
     }
 }
+
+/// A team's standing at one event, which heads its match list.
+final class EventStandingTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    func testCarriesRankRecordAndCountedStats() throws {
+        let detail = try fixture("event-detail", as: EventDetailResponse.self)
+        let division = try XCTUnwrap(detail.divisions.first)
+        let row = try XCTUnwrap(division.rankings.min(by: { $0.rank < $1.rank }))
+
+        let standing = try XCTUnwrap(detail.standing(for: row.team.name))
+        XCTAssertEqual(standing.rank, row.rank)
+        XCTAssertEqual(standing.division, division.name)
+        XCTAssertEqual(standing.record, row.record)
+        XCTAssertEqual(standing.wp, row.wp)
+        XCTAssertEqual(standing.ap, row.ap)
+        XCTAssertEqual(standing.sp, row.sp)
+        XCTAssertEqual(standing.highScore, row.highScore)
+        // A finished event has enough play behind it to carry fitted ratings.
+        XCTAssertNotNil(standing.stats)
+    }
+
+    func testIsFoundCaseInsensitively() throws {
+        let detail = try fixture("event-detail", as: EventDetailResponse.self)
+        let number = try XCTUnwrap(detail.divisions.first?.rankings.first?.team.name)
+        XCTAssertEqual(detail.standing(for: number.lowercased())?.rank,
+                       detail.standing(for: number)?.rank)
+    }
+
+    func testATeamNotAtTheEventHasNoStanding() throws {
+        let detail = try fixture("event-detail", as: EventDetailResponse.self)
+        XCTAssertNil(detail.standing(for: "31260X"))
+    }
+
+    func testFittedStatsAreWithheldWhileTheEventIsYoung() throws {
+        // 252H, seeded 33rd at an event 39 matches into its schedule: it has a
+        // rank and a record, but nothing has been played enough to rate it.
+        let partial = try fixture("event-partial", as: EventDetailResponse.self)
+        let standing = try XCTUnwrap(partial.standing(for: "252H"))
+        XCTAssertEqual(standing.rank, 33)
+        XCTAssertEqual(standing.record, "1\u{2013}0\u{2013}0")
+        XCTAssertNotNil(standing.wp)
+        XCTAssertNil(standing.stats, "too little play to fit a rating")
+    }
+
+    func testTheRightDivisionIsReported() throws {
+        let multi = try fixture("event-multi", as: EventDetailResponse.self)
+        for division in multi.divisions where !division.rankings.isEmpty {
+            let number = try XCTUnwrap(division.rankings.first?.team.name)
+            XCTAssertEqual(multi.standing(for: number)?.division, division.name)
+        }
+    }
+}
+
+/// Ordering the standings by each column.
+final class StandingSortTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    private func division() throws -> Division {
+        try XCTUnwrap(fixture("event-detail", as: EventDetailResponse.self).divisions.first)
+    }
+
+    func testLowerDprIsBetterAndEverythingElseIsHigher() throws {
+        let division = try division()
+        let ratings = division.powerRatings()
+        XCTAssertFalse(ratings.isEmpty)
+
+        let byDPR = division.standings(by: .dpr, ratings: ratings)
+        let dprs = byDPR.compactMap { ratings[$0.team.name.uppercased()]?.dpr }
+        XCTAssertEqual(dprs, dprs.sorted(), "DPR must run smallest first")
+
+        for sort in [StandingSort.opr, .ccwm, .wp, .ap, .sp, .high] {
+            let rows = division.standings(by: sort, ratings: ratings)
+            let values: [Double] = rows.compactMap { row in
+                switch sort {
+                case .opr: return ratings[row.team.name.uppercased()]?.opr
+                case .ccwm: return ratings[row.team.name.uppercased()]?.ccwm
+                case .wp: return row.wp.map(Double.init)
+                case .ap: return row.ap.map(Double.init)
+                case .sp: return row.sp.map(Double.init)
+                default: return row.highScore.map(Double.init)
+                }
+            }
+            XCTAssertEqual(values, values.sorted(by: >), "\(sort.rawValue) must run largest first")
+        }
+    }
+
+    func testTheBestDprIsNotTheWorstTeam() throws {
+        let division = try division()
+        let ratings = division.powerRatings()
+        let best = try XCTUnwrap(division.standings(by: .dpr, ratings: ratings).first)
+        let worst = try XCTUnwrap(division.standings(by: .dpr, ratings: ratings).last)
+        // Reversing the comparison would silently put the leakiest defence on
+        // top, which is the mistake this ordering exists to avoid.
+        XCTAssertLessThan(ratings[best.team.name.uppercased()]!.dpr,
+                          ratings[worst.team.name.uppercased()]!.dpr)
+    }
+
+    func testRankOrderIsTheSeedingOrder() throws {
+        let rows = try division().standings(by: .rank)
+        XCTAssertEqual(rows.map(\.rank), rows.map(\.rank).sorted())
+        XCTAssertEqual(rows.first?.rank, 1)
+    }
+
+    func testEverySortKeepsEveryTeam() throws {
+        let division = try division()
+        let ratings = division.powerRatings()
+        for sort in StandingSort.allCases {
+            let rows = division.standings(by: sort, ratings: ratings)
+            XCTAssertEqual(rows.count, division.rankings.count, "\(sort.rawValue) dropped a team")
+            XCTAssertEqual(Set(rows.map(\.team.id)), Set(division.rankings.map(\.team.id)))
+        }
+    }
+
+    func testTeamsWithoutAValueSortLast() throws {
+        let division = try division()
+        // No ratings supplied, so every OPR is missing: the order falls back to
+        // seeding rather than reversing or dropping rows.
+        let rows = division.standings(by: .opr, ratings: [:])
+        XCTAssertEqual(rows.map(\.rank), rows.map(\.rank).sorted())
+    }
+
+    func testFittedSortsAreOnlyOfferedWhenTheyExist() throws {
+        let rated = try division().availableSorts()
+        XCTAssertTrue(rated.contains(.opr))
+        XCTAssertTrue(rated.contains(.dpr))
+        XCTAssertTrue(rated.contains(.ccwm))
+
+        let young = try XCTUnwrap(fixture("event-partial", as: EventDetailResponse.self).divisions.first)
+        let sorts = young.availableSorts()
+        XCTAssertFalse(sorts.contains(.opr))
+        XCTAssertFalse(sorts.contains(.dpr))
+        XCTAssertFalse(sorts.contains(.ccwm))
+        // The counted columns are still there to sort by.
+        XCTAssertTrue(sorts.contains(.wp))
+        XCTAssertTrue(sorts.contains(.rank))
+    }
+}
+
+/// Starred teams, and that they survive a restart.
+final class FavouriteTeamTests: XCTestCase {
+    private func store(_ name: String = #function) -> (FavouriteTeams, UserDefaults) {
+        let suite = "favourites-test-\(name)-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        return (FavouriteTeams(defaults: defaults, key: "teams"), defaults)
+    }
+
+    func testAddsRemovesAndToggles() {
+        let (favourites, _) = store()
+        XCTAssertTrue(favourites.teams.isEmpty)
+
+        favourites.add(FavouriteTeam(number: "252H", name: "Holy Cow"))
+        XCTAssertTrue(favourites.contains("252H"))
+        XCTAssertEqual(favourites.teams.count, 1)
+
+        // Starring twice does not make two.
+        favourites.add(FavouriteTeam(number: "252H", name: "Holy Cow"))
+        XCTAssertEqual(favourites.teams.count, 1)
+
+        favourites.toggle(FavouriteTeam(number: "252H"))
+        XCTAssertFalse(favourites.contains("252H"))
+        favourites.toggle(FavouriteTeam(number: "252H"))
+        XCTAssertTrue(favourites.contains("252H"))
+    }
+
+    func testMatchingIgnoresCase() {
+        let (favourites, _) = store()
+        favourites.add(FavouriteTeam(number: "252h", name: "Holy Cow"))
+        XCTAssertTrue(favourites.contains("252H"))
+        favourites.remove("252H")
+        XCTAssertTrue(favourites.teams.isEmpty)
+    }
+
+    func testANameIsFilledInLater() {
+        let (favourites, _) = store()
+        // Starred from a match list, where only the number is on screen.
+        favourites.add(FavouriteTeam(number: "252H"))
+        XCTAssertNil(favourites.teams.first?.name)
+        // Seen later somewhere that knows the name.
+        favourites.add(FavouriteTeam(number: "252H", name: "Holy Cow"))
+        XCTAssertEqual(favourites.teams.count, 1)
+        XCTAssertEqual(favourites.teams.first?.name, "Holy Cow")
+        // And a later sighting without a name does not wipe it.
+        favourites.add(FavouriteTeam(number: "252H"))
+        XCTAssertEqual(favourites.teams.first?.name, "Holy Cow")
+    }
+
+    func testStaysInNumericOrder() {
+        let (favourites, _) = store()
+        for number in ["10188S", "2A", "252H", "2011B"] {
+            favourites.add(FavouriteTeam(number: number))
+        }
+        XCTAssertEqual(favourites.teams.map(\.number), ["2A", "252H", "2011B", "10188S"])
+    }
+
+    func testSurvivesARestart() {
+        let suite = "favourites-restart-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+
+        let first = FavouriteTeams(defaults: defaults, key: "teams")
+        first.add(FavouriteTeam(number: "252H", name: "Holy Cow"))
+        first.add(FavouriteTeam(number: "2A"))
+
+        let second = FavouriteTeams(defaults: defaults, key: "teams")
+        XCTAssertEqual(second.teams.map(\.number), ["2A", "252H"])
+        XCTAssertEqual(second.teams.last?.name, "Holy Cow")
+    }
+
+    func testDuplicatesWrittenByAnOlderBuildAreCleanedUp() {
+        let suite = "favourites-dupes-\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let stored = [FavouriteTeam(number: "252H"), FavouriteTeam(number: "252h", name: "Holy Cow")]
+        defaults.set(try! JSONEncoder().encode(stored), forKey: "teams")
+
+        let favourites = FavouriteTeams(defaults: defaults, key: "teams")
+        XCTAssertEqual(favourites.teams.count, 1)
+    }
+}
+
+/// Tournament momentum: a team's running scoring margin through an event.
+final class MomentumTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    private func matches(_ team: String = "19600Z") throws -> [TeamMatch] {
+        try fixture("event-detail", as: EventDetailResponse.self).matches(for: team)
+    }
+
+    func testRunningTotalIsTheSumOfTheMarginsSoFar() throws {
+        let points = TeamMomentum.points(from: try matches())
+        XCTAssertFalse(points.isEmpty)
+        var running = 0
+        for point in points {
+            running += point.margin
+            XCTAssertEqual(point.cumulative, running)
+        }
+        XCTAssertEqual(points.last?.cumulative, points.map(\.margin).reduce(0, +))
+    }
+
+    func testMarginsAgreeWithTheScores() throws {
+        let matches = try matches()
+        let points = TeamMomentum.points(from: matches)
+        for point in points {
+            let match = try XCTUnwrap(matches.first { $0.id == point.id })
+            XCTAssertEqual(point.margin, try XCTUnwrap(match.scoreFor) - XCTUnwrap(match.scoreAgainst))
+            // A win must move it up and a loss down; that is the whole reading.
+            switch match.outcome {
+            case .won: XCTAssertGreaterThan(point.margin, 0)
+            case .lost: XCTAssertLessThan(point.margin, 0)
+            case .tied: XCTAssertEqual(point.margin, 0)
+            case .scheduled: XCTFail("an unplayed match must not be plotted")
+            }
+        }
+    }
+
+    func testStepsAreNumberedFromOneInPlayOrder() throws {
+        let points = TeamMomentum.points(from: try matches())
+        XCTAssertEqual(points.map(\.match), Array(1...points.count))
+    }
+
+    func testUnplayedMatchesAreNotPlotted() throws {
+        let live = try fixture("event-partial", as: EventDetailResponse.self)
+        let matches = live.matches(for: "252H")
+        XCTAssertGreaterThan(matches.filter { !$0.isPlayed }.count, 0)
+        let points = TeamMomentum.points(from: matches)
+        XCTAssertEqual(points.count, matches.filter(\.isPlayed).count)
+        // Carrying the last value forward would draw a flat line into matches
+        // that have not happened.
+        XCTAssertLessThan(points.count, matches.count)
+    }
+
+    func testAnUnstartedTournamentHasNoCurve() throws {
+        let live = try fixture("event-live", as: EventDetailResponse.self)
+        XCTAssertTrue(TeamMomentum.points(from: live.matches(for: "663D")).isEmpty)
+    }
+
+    func testTheRangeAlwaysStraddlesZero() throws {
+        let points = TeamMomentum.points(from: try matches())
+        let range = TeamMomentum.range(points)
+        XCTAssertLessThan(range.lowerBound, 0)
+        XCTAssertGreaterThan(range.upperBound, 0)
+        for point in points {
+            XCTAssertTrue(range.contains(Double(point.cumulative)), "\(point.cumulative) is off the chart")
+        }
+        // A team that only ever won still shows the zero line beneath it.
+        let winning = [
+            MomentumPoint(id: 1, match: 1, name: "a", margin: 30, cumulative: 30, outcome: .won),
+            MomentumPoint(id: 2, match: 2, name: "b", margin: 20, cumulative: 50, outcome: .won),
+        ]
+        XCTAssertLessThan(TeamMomentum.range(winning).lowerBound, 0)
+    }
+}

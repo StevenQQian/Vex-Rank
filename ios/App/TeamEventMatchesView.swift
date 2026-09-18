@@ -13,12 +13,71 @@ struct TeamEventMatchesView: View {
         List {
             if let record = model.record {
                 Section {
-                    HStack(alignment: .top, spacing: 14) {
-                        metric("Record", record.summary, "\(record.played) played")
-                        metric("Remaining", "\(record.remaining)",
-                               record.remaining == 0 ? "Schedule complete" : "Still to play")
-                        metric("Event", ref.event.day?.formatted(.dateTime.month(.abbreviated).day()) ?? "—",
-                               ref.event.place.isEmpty ? " " : ref.event.place)
+                    VStack(alignment: .leading, spacing: 14) {
+                        // Where they stand, before what they played.
+                        if let standing = model.standing {
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text("#\(standing.rank)")
+                                    .font(.system(size: 34, weight: .bold, design: .rounded))
+                                    .foregroundStyle(theme.accent)
+                                    .monospacedDigit()
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text("QUALIFICATION RANK")
+                                        .font(.caption2.weight(.semibold)).tracking(1.2)
+                                        .foregroundStyle(.secondary)
+                                    Text(standing.division).font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                                VStack(alignment: .trailing, spacing: 1) {
+                                    Text(standing.record)
+                                        .font(.system(.title3, design: .rounded, weight: .semibold))
+                                        .monospacedDigit()
+                                    Text(record.remaining == 0
+                                         ? "Schedule complete"
+                                         : "\(record.remaining) still to play")
+                                        .font(.caption2).foregroundStyle(.secondary)
+                                }
+                            }
+
+                            Divider().overlay(Color.white.opacity(0.14))
+
+                            HStack(spacing: 14) {
+                                stat("WP", standing.wp.map(String.init))
+                                stat("AP", standing.ap.map(String.init))
+                                stat("SP", standing.sp.map(String.init))
+                                stat("High", standing.highScore.map(String.init))
+                            }
+                            if let s = standing.stats {
+                                HStack(spacing: 14) {
+                                    stat("OPR", String(format: "%.1f", s.opr))
+                                    stat("DPR", String(format: "%.1f", s.dpr))
+                                    stat("CCWM", String(format: "%.1f", s.ccwm))
+                                }
+                            }
+                        } else {
+                            // Registered but not seeded yet.
+                            HStack(alignment: .top, spacing: 14) {
+                                metric("Record", record.summary, "\(record.played) played")
+                                metric("Remaining", "\(record.remaining)",
+                                       record.remaining == 0 ? "Schedule complete" : "Still to play")
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+                .listRowBackground(theme.surface)
+            }
+
+            if !model.momentum.isEmpty {
+                Section("Tournament momentum") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        MomentumChart(points: model.momentum, accent: theme.accent)
+                            .frame(height: 190)
+                        let final = model.momentum.last?.cumulative ?? 0
+                        Text(final == 0
+                             ? "Level on points across \(model.momentum.count) matches."
+                             : "\(final > 0 ? "+" : "")\(final) points across \(model.momentum.count) matches.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
                     .padding(.vertical, 4)
                 }
@@ -58,10 +117,31 @@ struct TeamEventMatchesView: View {
         }
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
+        .refreshable { await model.load(ref, force: true) }
         .background(theme.page)
         .navigationTitle("\(ref.team) · matches")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await model.load(ref) }
+        .task {
+            await model.load(ref)
+            while !Task.isCancelled && (model.record?.remaining ?? 0) > 0 {
+                try? await Task.sleep(for: .seconds(45))
+                guard !Task.isCancelled else { break }
+                await model.load(ref, force: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stat(_ label: String, _ value: String?) -> some View {
+        if let value {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(label).font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary)
+                Text(value)
+                    .font(.system(size: 15, weight: .medium, design: .monospaced))
+                    .monospacedDigit()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func metric(_ label: String, _ value: String, _ detail: String) -> some View {
@@ -143,6 +223,8 @@ final class TeamEventMatchesModel {
     private(set) var played: [TeamMatch] = []
     private(set) var upcoming: [TeamMatch] = []
     private(set) var record: TeamEventRecord?
+    private(set) var standing: EventStanding?
+    private(set) var momentum: [MomentumPoint] = []
     private(set) var error: String?
     private let api = VEXRankAPI()
 
@@ -151,11 +233,13 @@ final class TeamEventMatchesModel {
         if record != nil && !force { return }
         error = nil
         do {
-            let detail = try await api.eventDetail(id: ref.event.id)
+            let detail = try await api.eventDetail(id: ref.event.id, fresh: force)
             let all = detail.matches(for: ref.team)
             played = all.filter(\.isPlayed)
             upcoming = all.filter { !$0.isPlayed }
             record = TeamEventRecord(matches: all)
+            standing = detail.standing(for: ref.team)
+            momentum = TeamMomentum.points(from: all)
         } catch {
             self.error = error.localizedDescription
         }
