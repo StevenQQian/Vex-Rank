@@ -1207,3 +1207,158 @@ final class EventSectionTests: XCTestCase {
         XCTAssertTrue(finished.availableSections.contains(.awards))
     }
 }
+
+/// OPR, DPR and CCWM, fitted from a real event's qualification matches.
+final class PowerRatingTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    private func division() throws -> Division {
+        try XCTUnwrap(fixture("event-detail", as: EventDetailResponse.self).divisions.first)
+    }
+
+    func testEveryTeamThatPlayedGetsARating() throws {
+        let division = try division()
+        let ratings = division.powerRatings()
+        let played = Set(division.qualification.filter(\.isPlayed).flatMap {
+            ($0.red?.numbers ?? []) + ($0.blue?.numbers ?? [])
+        }.map { $0.uppercased() })
+        XCTAssertFalse(played.isEmpty)
+        XCTAssertEqual(Set(ratings.keys), played)
+        for (team, stats) in ratings {
+            XCTAssertTrue(stats.opr.isFinite, "\(team) opr")
+            XCTAssertTrue(stats.dpr.isFinite, "\(team) dpr")
+            XCTAssertEqual(stats.ccwm, stats.opr - stats.dpr, accuracy: 0.0001)
+        }
+    }
+
+    /// The guarantee a least-squares fit actually makes.
+    ///
+    /// Solving the normal equations means `A.x = b` holds exactly, so this
+    /// rebuilds both from the matches and checks it. This is the test that
+    /// would catch a wrong solver; the size of the per-match residual, below,
+    /// is a property of the sport rather than of the code.
+    func testSolvesTheNormalEquationsExactly() throws {
+        let division = try division()
+        let ratings = division.powerRatings()
+
+        var sides: [(teams: [String], scored: Double)] = []
+        for match in division.qualification.filter(\.isPlayed) {
+            guard let red = match.red, let blue = match.blue,
+                  let redScore = red.score, let blueScore = blue.score else { continue }
+            sides.append((red.numbers.map { $0.uppercased() }, Double(redScore)))
+            sides.append((blue.numbers.map { $0.uppercased() }, Double(blueScore)))
+        }
+        let teams = Array(ratings.keys).sorted()
+        var a = [[Double]](repeating: [Double](repeating: 0, count: teams.count), count: teams.count)
+        var b = [Double](repeating: 0, count: teams.count)
+        let index = Dictionary(uniqueKeysWithValues: teams.enumerated().map { ($1, $0) })
+        for side in sides {
+            let rows = side.teams.compactMap { index[$0] }
+            for i in rows {
+                b[i] += side.scored
+                for j in rows { a[i][j] += 1 }
+            }
+        }
+
+        for i in 0..<teams.count {
+            let lhs = (0..<teams.count).reduce(0.0) { $0 + a[i][$1] * ratings[teams[$1]]!.opr }
+            XCTAssertEqual(lhs, b[i], accuracy: 0.001, "row \(teams[i]) of A.x = b")
+        }
+    }
+
+    func testTheFitTracksTheMatchesItWasBuiltFrom() throws {
+        let division = try division()
+        let ratings = division.powerRatings()
+        var error = 0.0
+        var total = 0.0
+        var count = 0.0
+        for match in division.qualification.filter(\.isPlayed) {
+            for alliance in [match.red, match.blue] {
+                guard let alliance, let score = alliance.score else { continue }
+                let predicted = alliance.numbers
+                    .compactMap { ratings[$0.uppercased()]?.opr }
+                    .reduce(0, +)
+                error += abs(Double(score) - predicted)
+                total += Double(score)
+                count += 1
+            }
+        }
+        XCTAssertGreaterThan(count, 0)
+        // The residual is bounded against the scores themselves rather than by
+        // a number picked out of the air. It does not get much tighter than
+        // this: 41 teams are fitted from 82 matches, so each team is seen four
+        // times, and a single broken robot moves its alliance by a hundred
+        // points. On this event the mean miss is about a third of the mean
+        // alliance score.
+        let mean = error / count
+        XCTAssertLessThan(mean, (total / count) * 0.5)
+    }
+
+    func testOffenceAndDefenceDifferAndRankSensibly() throws {
+        let ratings = try division().powerRatings()
+        let oprs = ratings.values.map(\.opr)
+        let dprs = ratings.values.map(\.dpr)
+        // A fitted rating set must actually distinguish teams.
+        XCTAssertGreaterThan(oprs.max()! - oprs.min()!, 1)
+        XCTAssertNotEqual(oprs.sorted(), dprs.sorted())
+
+        // The division winner should not be among the weakest contributors.
+        let top = try XCTUnwrap(division().rankings.min(by: { $0.rank < $1.rank }))
+        let best = try XCTUnwrap(ratings[top.team.name.uppercased()])
+        let median = oprs.sorted()[oprs.count / 2]
+        XCTAssertGreaterThan(best.opr, median, "the top seed should be an above-average scorer")
+    }
+
+    func testEliminationMatchesAreExcluded() throws {
+        let division = try division()
+        XCTAssertFalse(division.elimination.isEmpty, "this event has a bracket")
+        // Alliances in the bracket are chosen rather than drawn, so they say
+        // nothing about a team on its own and must not feed the fit. A team
+        // that only ever appeared in eliminations would show up otherwise.
+        let qualTeams = Set(division.qualification.filter(\.isPlayed).flatMap {
+            ($0.red?.numbers ?? []) + ($0.blue?.numbers ?? [])
+        }.map { $0.uppercased() })
+        XCTAssertTrue(Set(division.powerRatings().keys).isSubset(of: qualTeams))
+    }
+
+    func testAHalfPlayedEventIsNotRatedAtAll() throws {
+        // Captured 39 matches into a 219-match schedule across 97 teams: about
+        // one and a half appearances each. Solving that produced an OPR of -70
+        // and a CCWM of -222 - numbers shaped like ratings that mean nothing.
+        let partial = try fixture("event-partial", as: EventDetailResponse.self)
+        let division = try XCTUnwrap(partial.divisions.first)
+        let played = division.qualification.filter(\.isPlayed)
+        XCTAssertGreaterThan(played.count, 0, "it has started")
+        let teams = Set(played.flatMap { ($0.red?.numbers ?? []) + ($0.blue?.numbers ?? []) })
+        XCTAssertLessThan(played.count, teams.count, "but each team is barely seen")
+        XCTAssertTrue(division.powerRatings().isEmpty)
+    }
+
+    func testAFinishedEventClearsTheThreshold() throws {
+        let division = try division()
+        let played = division.qualification.filter(\.isPlayed)
+        let teams = Set(played.flatMap { ($0.red?.numbers ?? []) + ($0.blue?.numbers ?? []) })
+        XCTAssertGreaterThanOrEqual(played.count, teams.count)
+        XCTAssertFalse(division.powerRatings().isEmpty)
+    }
+
+    func testAnEventWithNothingPlayedHasNoRatings() throws {
+        let live = try fixture("event-live", as: EventDetailResponse.self)
+        let division = try XCTUnwrap(live.divisions.first)
+        XCTAssertFalse(division.qualification.isEmpty, "it has a schedule")
+        XCTAssertTrue(division.powerRatings().isEmpty, "but nothing to fit yet")
+    }
+
+    func testSolverHandlesAKnownSystem() {
+        // 2x + y = 5, x + 3y = 10  ->  x = 1, y = 3
+        let solution = Division.solve([[2, 1], [1, 3]], [5, 10])
+        let answer = try? XCTUnwrap(solution)
+        XCTAssertEqual(answer?[0] ?? .nan, 1, accuracy: 0.0001)
+        XCTAssertEqual(answer?[1] ?? .nan, 3, accuracy: 0.0001)
+        // A singular system returns nothing rather than nonsense.
+        XCTAssertNil(Division.solve([[1, 2], [2, 4]], [3, 6]))
+    }
+}

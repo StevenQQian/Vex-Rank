@@ -180,29 +180,67 @@ struct EventDetailView: View {
     private func standings(_ division: Division) -> some View {
         let all = division.rankings.sorted { $0.rank < $1.rank }
         let key = "division-\(division.id)"
+        // Fitted once per division, not per row: it solves a system across
+        // every qualification match, which is not work to repeat 41 times.
+        let ratings = model.powerRatings(for: division)
         return Section("Qualification standings") {
             ForEach(visible(all, key: key)) { row in
                 // The whole row is the link, so the disclosure sits at the
                 // trailing edge instead of landing between the number and the
                 // record.
                 NavigationLink(value: TeamRef(row.team.name, fromEvent: event)) {
-                    HStack {
-                        Text("#\(row.rank)")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(theme.accent)
-                            .frame(width: 44, alignment: .leading)
-                            .monospacedDigit()
-                        // The API carries the number in `name`.
-                        Text(row.team.name).font(.subheadline)
-                        Spacer()
-                        Text(row.record).font(.caption).foregroundStyle(.secondary)
-                            .monospacedDigit()
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text("#\(row.rank)")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(theme.accent)
+                                .frame(width: 44, alignment: .leading)
+                                .monospacedDigit()
+                            // The API carries the number in `name`.
+                            Text(row.team.name).font(.subheadline)
+                            Spacer()
+                            Text(row.record).font(.caption).foregroundStyle(.secondary)
+                                .monospacedDigit()
+                        }
+                        statLine(row, ratings[row.team.name.uppercased()])
                     }
                 }
             }
             revealButton(total: all.count, key: key, noun: "teams")
         }
         .listRowBackground(theme.surface)
+    }
+
+    /// The counted figures the API publishes, then the fitted ones.
+    @ViewBuilder
+    private func statLine(_ row: DivisionRanking, _ stats: TeamEventStats?) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 10) {
+                stat("WP", row.wp.map(String.init))
+                stat("AP", row.ap.map(String.init))
+                stat("SP", row.sp.map(String.init))
+                stat("High", row.highScore.map(String.init))
+            }
+            if let stats {
+                HStack(spacing: 10) {
+                    stat("OPR", String(format: "%.1f", stats.opr))
+                    stat("DPR", String(format: "%.1f", stats.dpr))
+                    stat("CCWM", String(format: "%.1f", stats.ccwm))
+                }
+            }
+        }
+        .padding(.leading, 44)
+    }
+
+    @ViewBuilder
+    private func stat(_ label: String, _ value: String?) -> some View {
+        if let value {
+            HStack(spacing: 3) {
+                Text(label).font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                Text(value).font(.system(size: 11, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.secondary).monospacedDigit()
+            }
+        }
     }
 
     @ViewBuilder
@@ -336,6 +374,18 @@ final class EventDetailModel {
     private(set) var detail: EventDetailResponse?
     private(set) var error: String?
     private let api = VEXRankAPI()
+
+    /// Fitted ratings per division, computed once and kept: solving the
+    /// system on every redraw of the list would be wasteful, and the input
+    /// does not change once the event is loaded.
+    private var ratingsCache: [Int: [String: TeamEventStats]] = [:]
+
+    func powerRatings(for division: Division) -> [String: TeamEventStats] {
+        if let cached = ratingsCache[division.id] { return cached }
+        let fitted = division.powerRatings()
+        ratingsCache[division.id] = fitted
+        return fitted
+    }
 
     /// Whether this event lists any match for `team`, which decides if the
     /// button into their matches is offered at all.
