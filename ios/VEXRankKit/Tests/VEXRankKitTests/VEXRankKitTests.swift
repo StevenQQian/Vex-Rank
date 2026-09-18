@@ -957,3 +957,89 @@ final class TeamNumberOrderTests: XCTestCase {
         }
     }
 }
+
+/// A team's remaining schedule at the competition it is at now.
+///
+/// Both fixtures were captured while an event was actually running - a
+/// three-day signature event with 219 scheduled matches and none yet played -
+/// which is the only state in which this feature does anything.
+final class UpcomingMatchTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    private func profile() throws -> TeamProfileResponse { try fixture("team-live", as: TeamProfileResponse.self) }
+    private func event() throws -> EventDetailResponse { try fixture("event-live", as: EventDetailResponse.self) }
+
+    /// A day inside the captured event's run (18-20 September 2026).
+    private func day(_ day: Int) -> Date {
+        DateComponents(calendar: .current, timeZone: .current,
+                       year: 2026, month: 9, day: day, hour: 12).date!
+    }
+
+    func testFindsTheEventTheTeamIsAtToday() throws {
+        let current = try XCTUnwrap(profile().currentEvent(on: day(18)))
+        XCTAssertEqual(current.id, 64359)
+        // Every day of a multi-day event counts, not just the first.
+        XCTAssertEqual(try profile().currentEvent(on: day(19))?.id, 64359)
+        XCTAssertEqual(try profile().currentEvent(on: day(20))?.id, 64359)
+    }
+
+    func testNoEventOnDaysOutsideTheRun() throws {
+        XCTAssertNil(try profile().currentEvent(on: day(17)))
+        XCTAssertNil(try profile().currentEvent(on: day(21)))
+    }
+
+    func testEventRunIsComparedByDayNotByInstant() throws {
+        let event = try XCTUnwrap(profile().events?.first { $0.id == 64359 })
+        // Timestamps are midnight in the venue's offset. Comparing instants
+        // would end the event part-way through its last day for a reader in
+        // another time zone.
+        XCTAssertTrue(event.runs(on: day(20)))
+        let lateOnTheLastDay = DateComponents(calendar: .current, timeZone: .current,
+                                              year: 2026, month: 9, day: 20, hour: 23).date!
+        XCTAssertTrue(event.runs(on: lateOnTheLastDay))
+    }
+
+    func testListsOnlyThisTeamsUnplayedMatches() throws {
+        let matches = try event().upcomingMatches(for: "663D")
+        XCTAssertFalse(matches.isEmpty)
+        let all = try event().divisions.flatMap { $0.matches ?? [] }
+        XCTAssertLessThan(matches.count, all.count, "one team does not play every match")
+
+        for match in matches {
+            let source = try XCTUnwrap(all.first { $0.id == match.id })
+            XCTAssertFalse(source.isPlayed)
+            let mine = match.colour == "red" ? source.red : source.blue
+            XCTAssertTrue(mine?.numbers.contains { $0.uppercased() == "663D" } ?? false)
+            // The team is not listed as its own partner or its own opponent.
+            XCTAssertFalse(match.partners.contains { $0.uppercased() == "663D" })
+            XCTAssertFalse(match.opponents.contains { $0.uppercased() == "663D" })
+        }
+    }
+
+    func testMatchingIsCaseInsensitive() throws {
+        XCTAssertEqual(try event().upcomingMatches(for: "663d").map(\.id),
+                       try event().upcomingMatches(for: "663D").map(\.id))
+    }
+
+    func testAreInScheduledOrder() throws {
+        let matches = try event().upcomingMatches(for: "663D")
+        let times = matches.compactMap(\.scheduled)
+        XCTAssertEqual(times.count, matches.count, "this event schedules every match")
+        XCTAssertEqual(times, times.sorted())
+    }
+
+    func testATeamNotAtTheEventHasNothing() throws {
+        XCTAssertTrue(try event().upcomingMatches(for: "31260X").isEmpty)
+    }
+
+    func testAFinishedEventLeavesNothingToShow() throws {
+        // The completed event: every match played, so nothing is upcoming even
+        // for a team that was there.
+        let finished = try fixture("event-detail", as: EventDetailResponse.self)
+        let played = try XCTUnwrap(finished.divisions.first?.rankings.first?.team.name)
+        XCTAssertTrue(finished.upcomingMatches(for: played).isEmpty)
+    }
+}

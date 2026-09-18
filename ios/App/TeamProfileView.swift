@@ -39,6 +39,7 @@ struct TeamProfileView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     if let profile = model.profile {
                         let season = season ?? profile.seasons.first?.id
+                        upcoming
                         seasonPicker(profile)
                         seasonBand(profile, season: season).reveal()
                         let trend = profile.ratingHistory
@@ -188,6 +189,69 @@ struct TeamProfileView: View {
             return ("SEASON END VCR", "\(last.rating)", last.rating)
         }
         return ("RANKING STATUS", "Unrated", nil)
+    }
+
+    /// What this team still has to play at the competition it is at right now.
+    /// Nothing is drawn when they are not at one, or when their schedule is
+    /// done - which is most of the time, so it must not leave a gap.
+    @ViewBuilder
+    private var upcoming: some View {
+        if let event = model.currentEvent, !model.upcomingMatches.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("UP NEXT").font(.caption2.weight(.semibold)).tracking(1.6)
+                        .foregroundStyle(theme.accent)
+                    NavigationLink(value: event.ref) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(event.name).font(.subheadline.weight(.medium)).lineLimit(2)
+                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ForEach(model.upcomingMatches) { match in
+                    VStack(alignment: .leading, spacing: 5) {
+                        Divider().overlay(Color.white.opacity(0.18))
+                        HStack(alignment: .firstTextBaseline) {
+                            Text(match.name).font(.subheadline.weight(.medium))
+                            Spacer(minLength: 8)
+                            if let time = match.scheduled {
+                                Text(time.formatted(date: .omitted, time: .shortened))
+                                    .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                            }
+                        }
+                        HStack(spacing: 6) {
+                            Text(match.colour == "red" ? "RED" : "BLUE")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 5).padding(.vertical, 2)
+                                .background(match.colour == "red" ? Color.red : Color.blue)
+                                .clipShape(RoundedRectangle(cornerRadius: 3))
+                            if !match.partners.isEmpty {
+                                Text("with \(match.partners.joined(separator: ", "))")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            }
+                            if let field = match.field, !field.isEmpty {
+                                Text("· \(field)").font(.caption).foregroundStyle(.tertiary)
+                            }
+                        }
+                        if !match.opponents.isEmpty {
+                            Text("vs \(match.opponents.joined(separator: ", "))")
+                                .font(.caption).foregroundStyle(.primary.opacity(0.8))
+                        }
+                    }
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(theme.surface)
+            .clipShape(RoundedRectangle(cornerRadius: 14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14)
+                    .strokeBorder(theme.accent.opacity(0.35), lineWidth: 1)
+            )
+        }
     }
 
     private func seasonBand(_ profile: TeamProfileResponse, season: Int?) -> some View {
@@ -353,13 +417,32 @@ final class TeamProfileModel {
     /// published number.
     private(set) var resolvedRanking: TeamRanking?
     private(set) var error: String?
+    /// The competition the team is at right now, and what they have left to
+    /// play there. Both empty unless an event is actually running.
+    private(set) var currentEvent: TeamEvent?
+    private(set) var upcomingMatches: [UpcomingMatch] = []
     private let api = VEXRankAPI()
+
+    /// Fetched separately and allowed to fail quietly: the schedule is a bonus
+    /// on top of the profile, and a profile that loaded should not report an
+    /// error because an extra request did not.
+    @MainActor
+    private func loadUpcoming(number: String) async {
+        guard let event = profile?.currentEvent() else { return }
+        guard let detail = try? await api.eventDetail(id: String(event.id)) else { return }
+        let matches = detail.upcomingMatches(for: number)
+        guard !matches.isEmpty else { return }
+        currentEvent = event
+        upcomingMatches = matches
+    }
 
     @MainActor
     func load(number: String, ranking: TeamRanking?) async {
         guard profile == nil else { return }
         do { profile = try await api.teamProfile(number: number) }
         catch { self.error = error.localizedDescription }
+
+        await loadUpcoming(number: number)
 
         guard ranking == nil else { return }
         // Best effort: a team outside the published ranking simply has none.
