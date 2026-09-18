@@ -35,7 +35,7 @@ struct EventsListView: View {
             if case .loaded(let events) = model.state,
                let id = openEventID,
                let match = events.first(where: { $0.id == id }) {
-                path?.wrappedValue.append(match)
+                path?.wrappedValue.append(match.ref)
             }
         }
     }
@@ -80,7 +80,7 @@ struct EventsListView: View {
 
     private func list(_ events: [VEXEvent]) -> some View {
         List(events) { event in
-            NavigationLink(value: event) {
+            NavigationLink(value: event.ref) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     Text(event.day.map { $0.formatted(.dateTime.month(.abbreviated).day()) } ?? event.date)

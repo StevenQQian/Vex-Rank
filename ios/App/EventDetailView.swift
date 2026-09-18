@@ -3,7 +3,7 @@ import VEXRankKit
 
 @available(iOS 17.0, *)
 struct EventDetailView: View {
-    let event: VEXEvent
+    let event: EventRef
     @Environment(\.vexTheme) private var theme
     @State private var model = EventDetailModel()
     /// Sections that the reader has asked to see in full. Without a cap, a
@@ -39,17 +39,22 @@ struct EventDetailView: View {
                         let key = "division-\(division.id)"
                         Section("\(division.name) · qualification") {
                             ForEach(visible(all, key: key)) { row in
-                                HStack {
-                                    Text("#\(row.rank)")
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(theme.accent)
-                                        .frame(width: 44, alignment: .leading)
-                                        .monospacedDigit()
-                                    // The API carries the team number in `name`.
-                                    Text(row.team.name).font(.subheadline)
-                                    Spacer()
-                                    Text(row.record).font(.caption).foregroundStyle(.secondary)
-                                        .monospacedDigit()
+                                // The whole row is the link, so the disclosure
+                                // sits at the trailing edge instead of landing
+                                // between the number and the record.
+                                NavigationLink(value: row.team.name) {
+                                    HStack {
+                                        Text("#\(row.rank)")
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(theme.accent)
+                                            .frame(width: 44, alignment: .leading)
+                                            .monospacedDigit()
+                                        // The API carries the number in `name`.
+                                        Text(row.team.name).font(.subheadline)
+                                        Spacer()
+                                        Text(row.record).font(.caption).foregroundStyle(.secondary)
+                                            .monospacedDigit()
+                                    }
                                 }
                             }
                             revealButton(total: all.count, key: key, noun: "teams")
@@ -100,7 +105,40 @@ struct EventDetailView: View {
                     .listRowBackground(theme.surface)
                 }
 
-                if detail.divisions.allSatisfy({ $0.rankings.isEmpty }) && detail.awards.isEmpty && skills.isEmpty {
+                ForEach(detail.divisions) { division in
+                    matchSection("\(division.name) · qualification matches",
+                                 division.qualification,
+                                 key: "qual-\(division.id)")
+                    matchSection("\(division.name) · elimination",
+                                 division.elimination,
+                                 key: "elim-\(division.id)")
+                }
+
+                // Registered teams. For an upcoming event this is the only
+                // thing there is to show, and the screen previously said only
+                // that the event had not been played.
+                if !detail.teams.isEmpty {
+                    let teams = detail.teams.sorted { $0.number < $1.number }
+                    Section("Registered teams") {
+                        ForEach(visible(teams, key: "teams")) { team in
+                            NavigationLink(value: team.number) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(team.number).font(.subheadline.weight(.medium))
+                                    if let name = team.name, !name.isEmpty {
+                                        Text(name).font(.caption).foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                        }
+                        revealButton(total: teams.count, key: "teams", noun: "teams")
+                    }
+                    .listRowBackground(theme.surface)
+                }
+
+                if detail.divisions.allSatisfy({ $0.rankings.isEmpty }) && detail.awards.isEmpty && skills.isEmpty
+                    && detail.divisions.allSatisfy({ ($0.matches ?? []).isEmpty })
+                    && detail.teams.isEmpty {
                     // Says which of the two it is, rather than showing nothing.
                     Section {
                         Text(event.isUpcoming
@@ -129,6 +167,54 @@ struct EventDetailView: View {
         .navigationTitle(event.name)
         .navigationBarTitleDisplayMode(.inline)
         .task { await model.load(id: event.id) }
+    }
+
+    @ViewBuilder
+    private func matchSection(_ title: String, _ matches: [DivisionMatch], key: String) -> some View {
+        if !matches.isEmpty {
+            Section(title) {
+                ForEach(visible(matches, key: key)) { match in
+                    matchRow(match)
+                }
+                revealButton(total: matches.count, key: key, noun: "matches")
+            }
+            .listRowBackground(theme.surface)
+        }
+    }
+
+    private func matchRow(_ match: DivisionMatch) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text(match.name ?? "Match").font(.subheadline.weight(.medium))
+                Spacer()
+                Text(match.isPlayed ? (match.field ?? "Final") : "Not played")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            HStack(alignment: .top, spacing: 12) {
+                alliance(match.red, colour: .red, won: match.winner == "red", played: match.isPlayed)
+                alliance(match.blue, colour: .blue, won: match.winner == "blue", played: match.isPlayed)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func alliance(_ alliance: MatchAlliance?, colour: Color, won: Bool, played: Bool) -> some View {
+        HStack(spacing: 8) {
+            Rectangle().fill(colour).frame(width: 2)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(played ? (alliance?.score.map(String.init) ?? "—") : "—")
+                    .font(.system(.title3, design: .monospaced, weight: won ? .bold : .regular))
+                    .foregroundStyle(colour)
+                    .monospacedDigit()
+                // Plain text, not links: a NavigationLink inside a list row
+                // draws its own disclosure, and four of them per match reads
+                // as clutter. The standings above are the way into a team.
+                ForEach(alliance?.numbers ?? [], id: \.self) { number in
+                    Text(number).font(.caption2).foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func visible<T>(_ rows: [T], key: String) -> [T] {

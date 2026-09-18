@@ -28,6 +28,7 @@ struct VEXRankApp: App {
                     RankingsListView()
                         .navigationTitle("World ranking")
                         .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Rankings", systemImage: "trophy") }
@@ -36,7 +37,9 @@ struct VEXRankApp: App {
                 NavigationStack(path: $eventPath) {
                     EventsListView(openEventID: Self.launchEvent, path: $eventPath)
                         .navigationTitle("Events")
-                        .navigationDestination(for: VEXEvent.self) { EventDetailView(event: $0) }
+                        .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
+                        // Reached by tapping a team in a standings or match row.
+                        .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Events", systemImage: "calendar") }
@@ -46,6 +49,7 @@ struct VEXRankApp: App {
                     StatLeadersView()
                         .navigationTitle("Stat leaders")
                         .navigationDestination(for: String.self) { TeamProfileView(number: $0) }
+                        .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
                         .toolbar { themeMenu }
                 }
                 .tabItem { Label("Stats", systemImage: "chart.bar") }

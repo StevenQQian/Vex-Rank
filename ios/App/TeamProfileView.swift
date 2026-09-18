@@ -216,14 +216,19 @@ extension TeamProfileView {
                 ForEach(events) { event in
                     VStack(alignment: .leading, spacing: 5) {
                         Divider().overlay(Color.white.opacity(0.18))
-                        HStack(alignment: .firstTextBaseline) {
-                            Text(event.name).font(.subheadline.weight(.medium))
-                            Spacer(minLength: 8)
-                            if let day = event.day {
-                                Text(day.formatted(.dateTime.month(.abbreviated).day()))
-                                    .font(.caption).foregroundStyle(.secondary)
+                        NavigationLink(value: event.ref) {
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(event.name).font(.subheadline.weight(.medium))
+                                Spacer(minLength: 8)
+                                if let day = event.day {
+                                    Text(day.formatted(.dateTime.month(.abbreviated).day()))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2).foregroundStyle(.tertiary)
                             }
                         }
+                        .buttonStyle(.plain)
                         if let place = event.location, !place.isEmpty {
                             Text(place).font(.caption).foregroundStyle(.secondary)
                         }

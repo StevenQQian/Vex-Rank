@@ -657,3 +657,70 @@ final class RankingFilterTests: XCTestCase {
                       "whitespace is not a search")
     }
 }
+
+/// Match lists, which the event screen shows and the web orders by a bracket
+/// that the API's round numbers do not follow.
+final class EventMatchTests: XCTestCase {
+    private func detail() throws -> EventDetailResponse {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/event-detail", withExtension: "json"))
+        return try JSONDecoder().decode(EventDetailResponse.self, from: Data(contentsOf: url))
+    }
+
+    private func division() throws -> Division {
+        try XCTUnwrap(detail().divisions.first)
+    }
+
+    func testDecodesAlliancesAndScores() throws {
+        let match = try XCTUnwrap(division().qualification.first)
+        XCTAssertEqual(match.red?.numbers.count, 2)
+        XCTAssertEqual(match.blue?.numbers.count, 2)
+        XCTAssertNotNil(match.red?.score)
+        XCTAssertFalse(try XCTUnwrap(match.red?.numbers.first).isEmpty)
+    }
+
+    func testPlayedIsReadFromTheScoreNotTheScoredFlag() throws {
+        let division = try division()
+        let scoredFlagged = division.qualification.filter { $0.isPlayed }
+        XCTAssertFalse(scoredFlagged.isEmpty, "this event was played")
+        // The captured payload reports scored: false on matches that carry a
+        // real result, so the flag cannot be what decides this.
+        let raw = try XCTUnwrap(division.qualification.first { $0.isPlayed })
+        XCTAssertGreaterThan(try XCTUnwrap(raw.red?.score) + (raw.blue?.score ?? 0), 0)
+    }
+
+    func testWinnerIsTheHigherScoreAndNilOnATie() throws {
+        for match in try division().qualification where match.isPlayed {
+            let red = try XCTUnwrap(match.red?.score)
+            let blue = try XCTUnwrap(match.blue?.score)
+            if red == blue {
+                XCTAssertNil(match.winner)
+            } else {
+                XCTAssertEqual(match.winner, red > blue ? "red" : "blue")
+            }
+        }
+    }
+
+    func testQualificationAndEliminationDoNotOverlap() throws {
+        let division = try division()
+        let qualification = Set(division.qualification.map(\.id))
+        let elimination = Set(division.elimination.map(\.id))
+        XCTAssertFalse(qualification.isEmpty)
+        XCTAssertFalse(elimination.isEmpty)
+        XCTAssertTrue(qualification.isDisjoint(with: elimination))
+        XCTAssertEqual(qualification.count + elimination.count, division.matches?.count)
+    }
+
+    func testRoundOfSixteenSortsBeforeTheQuarterFinals() throws {
+        let rounds = try division().elimination.compactMap(\.round)
+        // The API numbers the round of 16 as 6, above the quarter-finals at 3,
+        // so a plain sort on the round would run the bracket backwards.
+        XCTAssertEqual(rounds.first, 6)
+        XCTAssertEqual(rounds.last, 5)
+        XCTAssertEqual(rounds, rounds.sorted { Division.bracketOrder($0) < Division.bracketOrder($1) })
+    }
+
+    func testQualificationIsInPlayOrder() throws {
+        let numbers = try division().qualification.compactMap(\.matchnum)
+        XCTAssertEqual(numbers, numbers.sorted())
+    }
+}

@@ -69,10 +69,84 @@ public struct DivisionTeam: Codable, Sendable, Hashable {
     public let code: String?
 }
 
-public struct DivisionMatch: Codable, Sendable, Hashable {
-    public let id: Int?
+public struct DivisionMatch: Codable, Sendable, Identifiable, Hashable {
+    public let id: Int
     public let name: String?
     public let round: Int?
+    public let instance: Int?
+    public let matchnum: Int?
+    public let field: String?
+    public let scheduled: String?
+    public let alliances: [MatchAlliance]?
+
+    /// Whether the match has been played.
+    ///
+    /// Deliberately not the API's `scored` flag: that is false on completed
+    /// matches in the captured payload (every qualifier of a finished event
+    /// reads `scored: false`), so trusting it would print "Not played" beside a
+    /// real 153-123 result. A posted score is the honest signal.
+    public var isPlayed: Bool {
+        (alliances ?? []).contains { ($0.score ?? -1) >= 0 }
+            && (alliances ?? []).contains { ($0.score ?? 0) > 0 }
+    }
+
+    public var red: MatchAlliance? { alliances?.first { $0.color == "red" } }
+    public var blue: MatchAlliance? { alliances?.first { $0.color == "blue" } }
+
+    /// "red", "blue", or nil for a tie or an unplayed match.
+    public var winner: String? {
+        guard isPlayed, let red = red?.score, let blue = blue?.score, red != blue else { return nil }
+        return red > blue ? "red" : "blue"
+    }
+}
+
+public struct MatchAlliance: Codable, Sendable, Hashable {
+    public let color: String?
+    public let score: Int?
+    public let teams: [MatchTeamSlot]?
+
+    /// Team numbers on this alliance, in the order served.
+    public var numbers: [String] {
+        (teams ?? []).compactMap { $0.team?.name }.filter { !$0.isEmpty }
+    }
+}
+
+public struct MatchTeamSlot: Codable, Sendable, Hashable {
+    public let team: DivisionTeam?
+    public let sitting: Bool?
+}
+
+extension Division {
+    /// Qualification matches in play order.
+    public var qualification: [DivisionMatch] {
+        (matches ?? [])
+            .filter { $0.round == 2 || ($0.name?.localizedCaseInsensitiveContains("qual") ?? false) }
+            .sorted { ($0.matchnum ?? 0) < ($1.matchnum ?? 0) }
+    }
+
+    /// Elimination matches, earliest round first.
+    ///
+    /// Round 6 is the round of 16 and sorts *before* the quarter-finals at 3,
+    /// which is why this cannot just sort on the round number - the API's
+    /// numbering is not chronological.
+    public var elimination: [DivisionMatch] {
+        (matches ?? [])
+            .filter { match in
+                guard let round = match.round, round >= 3 else { return false }
+                let name = match.name ?? ""
+                return !name.localizedCaseInsensitiveContains("qual")
+                    && !name.localizedCaseInsensitiveContains("practice")
+            }
+            .sorted {
+                let a = Self.bracketOrder($0.round), b = Self.bracketOrder($1.round)
+                return a == b ? ($0.matchnum ?? 0) < ($1.matchnum ?? 0) : a < b
+            }
+    }
+
+    static func bracketOrder(_ round: Int?) -> Int {
+        guard let round else { return .max }
+        return round == 6 ? 0 : round
+    }
 }
 
 public struct EventAward: Codable, Sendable, Hashable {
@@ -128,5 +202,38 @@ extension EventDetailResponse {
         return Set(driver.keys).union(programming.keys)
             .map { EventSkillLeader(number: $0, driver: driver[$0] ?? 0, programming: programming[$0] ?? 0) }
             .sorted { $0.total == $1.total ? $0.number < $1.number : $0.total > $1.total }
+    }
+}
+
+/// What the detail screen needs to open an event, so it can be reached from
+/// the events feed and from a team's competition history alike - those two
+/// endpoints describe an event with different shapes, and neither is worth
+/// carrying into navigation whole.
+public struct EventRef: Sendable, Hashable, Identifiable {
+    public let id: String
+    public let name: String
+    public let day: Date?
+    public let place: String
+    public let isUpcoming: Bool
+
+    public init(id: String, name: String, day: Date?, place: String, isUpcoming: Bool) {
+        self.id = id
+        self.name = name
+        self.day = day
+        self.place = place
+        self.isUpcoming = isUpcoming
+    }
+}
+
+extension VEXEvent {
+    public var ref: EventRef {
+        EventRef(id: id, name: name, day: day, place: place, isUpcoming: isUpcoming)
+    }
+}
+
+extension TeamEvent {
+    public var ref: EventRef {
+        EventRef(id: String(id), name: name, day: day, place: location ?? "",
+                 isUpcoming: (day ?? .distantPast) > Date())
     }
 }
