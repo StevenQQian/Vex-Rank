@@ -41,6 +41,7 @@ struct TeamProfileView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     if let profile = model.profile {
                         let season = season ?? profile.seasons.first?.id
+                        officialLink
                         originPortal
                         upcoming
                         seasonPicker(profile)
@@ -203,6 +204,31 @@ struct TeamProfileView: View {
             return ("SEASON END VCR", "\(last.rating)", last.rating)
         }
         return ("RANKING STATUS", "Unrated", nil)
+    }
+
+    /// Out to the official site, for the things this app does not carry:
+    /// contact details, robot photos, the team's own description.
+    @ViewBuilder
+    private var officialLink: some View {
+        if let url = OfficialLinks.team(number) {
+            Link(destination: url) {
+                HStack(spacing: 10) {
+                    Image(systemName: "safari").foregroundStyle(theme.accent)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("View \(number) on events.vex.com")
+                            .font(.subheadline.weight(.medium))
+                        Text("Official team page").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.tertiary)
+                }
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(theme.surface)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .buttonStyle(.plain)
+        }
     }
 
     /// The way back into this team's matches at the event the reader came

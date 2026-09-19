@@ -15,6 +15,10 @@ public struct EventDetail: Codable, Sendable {
     public let start: String?
     public let end: String?
     public let location: EventLocation?
+    /// The API's own link to the event on the official site.
+    public let officialUrl: String?
+
+    public var official: URL? { OfficialLinks.event(officialUrl: officialUrl, sku: sku) }
 
     public var venueLine: String {
         guard let location else { return "" }

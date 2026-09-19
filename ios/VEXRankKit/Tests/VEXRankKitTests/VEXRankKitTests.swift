@@ -1937,3 +1937,52 @@ final class APICacheTests: XCTestCase {
                        "a unique parameter would force an edge miss on every refresh")
     }
 }
+
+/// Links out to the official site.
+final class OfficialLinkTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    func testTeamLinkMatchesTheVerifiedPattern() throws {
+        // Opened in a browser: this returns "V5RC Team : 252H : VEX Events".
+        XCTAssertEqual(OfficialLinks.team("252H")?.absoluteString,
+                       "https://events.vex.com/teams/V5RC/252H")
+        // The site's paths are uppercase.
+        XCTAssertEqual(OfficialLinks.team("252h")?.absoluteString,
+                       "https://events.vex.com/teams/V5RC/252H")
+        XCTAssertEqual(OfficialLinks.team("  31260X  ")?.absoluteString,
+                       "https://events.vex.com/teams/V5RC/31260X")
+        XCTAssertNil(OfficialLinks.team(""))
+        XCTAssertNil(OfficialLinks.team("   "))
+    }
+
+    func testEventLinkPrefersWhatTheApiSupplies() throws {
+        let detail = try fixture("event-dq", as: EventDetailResponse.self)
+        let official = try XCTUnwrap(detail.event.officialUrl)
+        XCTAssertEqual(detail.event.official?.absoluteString, official)
+        XCTAssertTrue(official.contains("events.vex.com"))
+        XCTAssertTrue(official.contains(try XCTUnwrap(detail.event.sku)))
+    }
+
+    func testEventLinkFallsBackToTheSku() {
+        XCTAssertEqual(
+            OfficialLinks.event(officialUrl: nil, sku: "RE-V5RC-26-4359")?.absoluteString,
+            "https://events.vex.com/robot-competitions/vex-robotics-competition/RE-V5RC-26-4359.html")
+        // A blank or unusable value falls back rather than producing a broken
+        // link; with neither, there is no link at all.
+        XCTAssertEqual(
+            OfficialLinks.event(officialUrl: "", sku: "RE-V5RC-26-4359")?.absoluteString,
+            "https://events.vex.com/robot-competitions/vex-robotics-competition/RE-V5RC-26-4359.html")
+        XCTAssertNil(OfficialLinks.event(officialUrl: nil, sku: nil))
+        XCTAssertNil(OfficialLinks.event(officialUrl: nil, sku: ""))
+    }
+
+    func testEveryCapturedEventCanBeLinked() throws {
+        for name in ["event-detail", "event-multi", "event-live", "event-dq"] {
+            let detail = try fixture(name, as: EventDetailResponse.self)
+            XCTAssertNotNil(detail.event.official, "\(name) produced no link")
+        }
+    }
+}

@@ -168,6 +168,18 @@ struct EventDetailView: View {
                         Label(venue, systemImage: "mappin.and.ellipse")
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
+                    if let url = detail?.event.official ?? OfficialLinks.event(officialUrl: nil, sku: nil) {
+                        Link(destination: url) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "safari")
+                                Text("View on events.vex.com").font(.subheadline)
+                                Image(systemName: "arrow.up.right").font(.caption2)
+                            }
+                            .foregroundStyle(theme.accent)
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 2)
+                    }
                     if let updated = model.updated {
                         // Scores arrive while a reader is watching, so say how
                         // old what they are looking at is.
