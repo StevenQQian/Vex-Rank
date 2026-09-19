@@ -235,14 +235,29 @@ final class TeamsDirectoryModel {
     private var teams: [DirectoryTeam] = []
     private let api = VEXRankAPI()
 
+    /// Builds the search index off the main actor.
+    ///
+    /// 56,000 rows have to be lowercased and turned into bytes, and the
+    /// countries list built, before the tab can draw. Done on the main actor -
+    /// which is where an @Observable model's methods run by default - that work
+    /// freezes the interface for as long as it takes. It is pure computation
+    /// over values, so it belongs anywhere else.
+    nonisolated private static func index(_ teams: [DirectoryTeam])
+        -> (rows: [(team: DirectoryTeam, haystack: [UInt8])], countries: [String]) {
+        (teams.map { ($0, TeamDirectory.haystack($0)) }, TeamDirectory.locations(teams).countries)
+    }
+
     @MainActor
     func load() async {
         state = .loading
         do {
             let response = try await api.teamDirectory()
+            let built = await Task.detached(priority: .userInitiated) {
+                Self.index(response.teams)
+            }.value
             teams = response.teams
-            indexed = response.teams.map { ($0, TeamDirectory.haystack($0)) }
-            countries = TeamDirectory.locations(response.teams).countries
+            indexed = built.rows
+            countries = built.countries
             total = response.total
             updated = response.updated
             state = .loaded

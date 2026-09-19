@@ -1843,3 +1843,97 @@ final class RecordCheckTests: XCTestCase {
         XCTAssertEqual(official.summary, "2\u{2013}0\u{2013}0")
     }
 }
+
+/// A stub protocol handler, so the caching can be tested without the network.
+final class CountingProtocol: URLProtocol {
+    nonisolated(unsafe) static var body = Data()
+    nonisolated(unsafe) static var requests = 0
+    nonisolated(unsafe) static var delay: TimeInterval = 0
+    nonisolated(unsafe) static var lastPath = ""
+
+    static func reset(_ payload: Data) {
+        body = payload
+        requests = 0
+        delay = 0
+    }
+
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+
+    override func startLoading() {
+        Self.requests += 1
+        Self.lastPath = request.url?.absoluteString ?? ""
+        let payload = Self.body
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200,
+                                       httpVersion: nil, headerFields: nil)!
+        let finish = {
+            self.client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            self.client?.urlProtocol(self, didLoad: payload)
+            self.client?.urlProtocolDidFinishLoading(self)
+        }
+        if Self.delay > 0 {
+            DispatchQueue.global().asyncAfter(deadline: .now() + Self.delay, execute: finish)
+        } else {
+            finish()
+        }
+    }
+
+    override func stopLoading() {}
+}
+
+/// The client-side cache, which is what stopped one journey through the app
+/// fetching the same payload three or four times.
+final class APICacheTests: XCTestCase {
+    private func api() throws -> VEXRankAPI {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/event-detail", withExtension: "json"))
+        CountingProtocol.reset(try Data(contentsOf: url))
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [CountingProtocol.self]
+        return VEXRankAPI(baseURL: URL(string: "https://example.invalid")!,
+                          session: URLSession(configuration: configuration))
+    }
+
+    func testAsecondReadIsServedWithoutAnotherRequest() async throws {
+        let api = try api()
+        _ = try await api.eventDetail(id: "64392")
+        _ = try await api.eventDetail(id: "64392")
+        _ = try await api.eventDetail(id: "64392")
+        XCTAssertEqual(CountingProtocol.requests, 1, "the same event was fetched more than once")
+    }
+
+    func testDifferentEventsAreFetchedSeparately() async throws {
+        let api = try api()
+        _ = try await api.eventDetail(id: "64392")
+        _ = try await api.eventDetail(id: "64393")
+        XCTAssertEqual(CountingProtocol.requests, 2)
+    }
+
+    func testConcurrentCallersShareOneRequest() async throws {
+        let api = try api()
+        // The profile screen asks for an event's detail twice at once: once to
+        // read the standing and once for the schedule.
+        CountingProtocol.delay = 0.2
+        async let first = api.eventDetail(id: "64392")
+        async let second = api.eventDetail(id: "64392")
+        async let third = api.eventDetail(id: "64392")
+        _ = try await (first, second, third)
+        XCTAssertEqual(CountingProtocol.requests, 1, "concurrent callers each opened their own request")
+    }
+
+    func testAForcedRefreshGoesBackToTheNetwork() async throws {
+        let api = try api()
+        _ = try await api.eventDetail(id: "64392")
+        _ = try await api.eventDetail(id: "64392", fresh: true)
+        XCTAssertEqual(CountingProtocol.requests, 2, "pull to refresh must not be served from the cache")
+    }
+
+    func testTheRequestCarriesNoCacheBustingParameter() async throws {
+        let api = try api()
+        _ = try await api.eventDetail(id: "64392", fresh: true)
+        // Busting the edge turned an 80ms response into one that has been
+        // measured at twenty seconds, because the Worker then has to fan out
+        // to the upstream API.
+        XCTAssertFalse(CountingProtocol.lastPath.contains("fresh="),
+                       "a unique parameter would force an edge miss on every refresh")
+    }
+}

@@ -44,6 +44,24 @@ public actor VEXRankAPI {
         }
     }
 
+    /// Responses already in hand, and requests already in flight.
+    ///
+    /// Screens fetch the same things: opening a team from an event asks for
+    /// that event's detail to find the standing, then asks again for the
+    /// schedule, and the event screen behind it already had it. Without this
+    /// the same 180KB payload was fetched three or four times in a single
+    /// journey through the app.
+    private var cached: [String: (stored: Date, value: Any)] = [:]
+    private var inFlight: [String: Task<Any, Error>] = [:]
+
+    /// How long a response stays good. Short for anything that changes during
+    /// a competition, long for the directory, which is rebuilt daily.
+    private func lifetime(of path: String) -> TimeInterval {
+        if path.hasPrefix("/api/team-directory") { return 3600 }
+        if path.hasPrefix("/api/events/") { return 30 }
+        return 120
+    }
+
     public func rankings(season: Int? = nil) async throws -> RankingsResponse {
         var path = "/api/rankings?data=v49"
         if let season { path += "&season=\(season)" }
@@ -91,17 +109,37 @@ public actor VEXRankAPI {
     /// max-age and stale-while-revalidate, which is right for browsing and far
     /// too coarse for a match that was scored a minute ago.
     private func get<T: Decodable>(_ path: String, attempts: Int = 3, fresh: Bool = false) async throws -> T {
-        var path = path
-        if fresh {
-            path += (path.contains("?") ? "&" : "?") + "fresh=\(Int(Date().timeIntervalSince1970 * 1000))"
-        }
         guard let url = URL(string: path, relativeTo: baseURL) else {
             throw VEXRankError.unreachable
         }
 
         var request = URLRequest(url: url)
-        if fresh { request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData }
+        if fresh { request.cachePolicy = .reloadIgnoringLocalCacheData }
 
+        // A second caller for the same thing waits on the first rather than
+        // starting its own.
+        if !fresh {
+            if let hit = cached[path], Date().timeIntervalSince(hit.stored) < lifetime(of: path),
+               let value = hit.value as? T {
+                return value
+            }
+            if let running = inFlight[path] {
+                if let value = try await running.value as? T { return value }
+            }
+        }
+
+        let work = Task<Any, Error> { [self] in
+            try await fetch(request, path: path, attempts: attempts) as T
+        }
+        inFlight[path] = work
+        defer { inFlight[path] = nil }
+        let value = try await work.value
+        guard let typed = value as? T else { throw VEXRankError.unreachable }
+        cached[path] = (Date(), typed)
+        return typed
+    }
+
+    private func fetch<T: Decodable>(_ request: URLRequest, path: String, attempts: Int) async throws -> T {
         var lastError: VEXRankError = .unreachable
         for attempt in 0..<attempts {
             do {
