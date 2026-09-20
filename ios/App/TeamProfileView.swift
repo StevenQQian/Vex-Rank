@@ -12,6 +12,20 @@ struct TeamProfileView: View {
 
     /// From the list when present, otherwise resolved by the model.
     private var row: TeamRanking? { ranking ?? model.resolvedRanking }
+
+    /// Where the team is from, in as much detail as any feed carries.
+    ///
+    /// The two feeds disagree about what "region" means. The teams endpoint
+    /// gives "Canterbury, Victoria, Australia"; the rankings feed gives
+    /// "Victoria, Australia", because it is built for a table column that has
+    /// no room for a city. Reading the ranking first meant a team lost its
+    /// city precisely when it was ranked, and kept it when it was not.
+    ///
+    /// Whichever names more places wins, the profile breaking ties, so this
+    /// cannot get worse if a feed changes shape again.
+    private var location: String? {
+        TeamLocation.best(of: [model.profile?.team.region, row?.region])
+    }
     @Environment(\.vexTheme) private var theme
     @Environment(\.favouriteTeams) private var favourites
     @State private var model = TeamProfileModel()
@@ -100,7 +114,7 @@ struct TeamProfileView: View {
             )
             .frame(height: 96)
 
-            if let region = row?.region ?? model.profile?.team.region {
+            if let region = location {
                 Label(region, systemImage: "mappin.and.ellipse")
                     .font(.title3)
                     .foregroundStyle(.primary.opacity(0.85))

@@ -140,7 +140,9 @@ public struct TeamEvent: Codable, Sendable, Identifiable, Hashable {
     /// The API writes "No elimination result" rather than omitting the field.
     public let elimination: String?
 
-    public var day: Date? { start.flatMap { ISO8601DateFormatter().date(from: $0) } }
+    /// The calendar day the event starts on. Read as the day it names rather
+    /// than as an instant, so it prints the same day everywhere.
+    public var day: Date? { EventDay.parse(start) }
 
     public var eliminationResult: String? {
         guard let elimination, !elimination.isEmpty,

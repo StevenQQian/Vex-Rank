@@ -96,7 +96,7 @@ public struct RecordCheck: Sendable, Hashable {
 }
 
 extension TeamEvent {
-    public var endDay: Date? { (end ?? start).flatMap { ISO8601DateFormatter().date(from: $0) } }
+    public var endDay: Date? { EventDay.parse(end ?? start) }
 
     /// Whether `date` falls inside this event's run, compared by calendar day.
     ///

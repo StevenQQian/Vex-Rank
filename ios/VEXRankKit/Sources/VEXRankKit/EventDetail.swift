@@ -20,6 +20,9 @@ public struct EventDetail: Codable, Sendable {
 
     public var official: URL? { OfficialLinks.event(officialUrl: officialUrl, sku: sku) }
 
+    /// The calendar day the event starts on.
+    public var day: Date? { EventDay.parse(start) }
+
     public var venueLine: String {
         guard let location else { return "" }
         return [location.venue, location.city, location.region, location.country]

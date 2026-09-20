@@ -1986,3 +1986,136 @@ final class OfficialLinkTests: XCTestCase {
         }
     }
 }
+
+/// Event dates are calendar days, and must survive being printed.
+final class EventDayTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    private func components(_ date: Date) -> DateComponents {
+        Calendar.current.dateComponents([.year, .month, .day], from: date)
+    }
+
+    func testAPlainDateKeepsItsDay() throws {
+        // The bug: parsed as UTC midnight and printed in the reader's zone,
+        // "2026-09-20" showed as Sep 19 anywhere west of UTC.
+        let parsed = try XCTUnwrap(EventDay.parse("2026-09-20"))
+        XCTAssertEqual(components(parsed).year, 2026)
+        XCTAssertEqual(components(parsed).month, 9)
+        XCTAssertEqual(components(parsed).day, 20)
+    }
+
+    func testATimestampKeepsTheDayItNames() throws {
+        // Midnight in the venue's offset. Read as an instant and printed in a
+        // zone further west, this also fell back a day.
+        let parsed = try XCTUnwrap(EventDay.parse("2026-09-19T00:00:00-04:00"))
+        XCTAssertEqual(components(parsed).day, 19)
+        XCTAssertEqual(components(parsed).month, 9)
+
+        // A venue far to the east is the same story in the other direction.
+        let auckland = try XCTUnwrap(EventDay.parse("2026-09-20T00:00:00+12:00"))
+        XCTAssertEqual(components(auckland).day, 20)
+    }
+
+    func testBadInputIsNoDate() {
+        XCTAssertNil(EventDay.parse(nil))
+        XCTAssertNil(EventDay.parse(""))
+        XCTAssertNil(EventDay.parse("not a date"))
+        XCTAssertNil(EventDay.parse("2026-09"))
+    }
+
+    func testTheListAndTheDetailAgreeOnTheSameEvent() throws {
+        // The two screens read different fields from different endpoints; they
+        // have to land on the same day or the date changes as you tap through.
+        let detail = try fixture("event-dq", as: EventDetailResponse.self)
+        let fromDetail = try XCTUnwrap(detail.event.day)
+        let fromList = try XCTUnwrap(EventDay.parse("2026-09-18"))
+        XCTAssertEqual(components(fromDetail), components(fromList))
+    }
+
+    func testEveryCapturedEventStillHasADay() throws {
+        for name in ["event-detail", "event-multi", "event-live", "event-dq"] {
+            let detail = try fixture(name, as: EventDetailResponse.self)
+            XCTAssertNotNil(detail.event.day, "\(name) lost its date")
+        }
+        let profile = try fixture("team-live", as: TeamProfileResponse.self)
+        for event in try XCTUnwrap(profile.events) {
+            XCTAssertNotNil(event.day, "\(event.name) lost its date")
+        }
+    }
+
+    func testAnEventStillRunsOnItsOwnDays() throws {
+        let profile = try fixture("team-live", as: TeamProfileResponse.self)
+        let event = try XCTUnwrap(profile.events?.first { $0.id == 64359 })
+        // 18th to 20th September, inclusive at both ends.
+        for day in 18...20 {
+            let noon = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: day, hour: 12))!
+            XCTAssertTrue(event.runs(on: noon), "should run on the \(day)th")
+        }
+        let before = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 17, hour: 12))!
+        let after = Calendar.current.date(from: DateComponents(year: 2026, month: 9, day: 21, hour: 12))!
+        XCTAssertFalse(event.runs(on: before))
+        XCTAssertFalse(event.runs(on: after))
+    }
+}
+
+/// Which of the feeds' locations a profile should show.
+final class TeamLocationTests: XCTestCase {
+    private func fixture<T: Decodable>(_ name: String, as type: T.Type) throws -> T {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/\(name)", withExtension: "json"))
+        return try JSONDecoder().decode(type, from: Data(contentsOf: url))
+    }
+
+    func testTheCitySurvivesWhenATeamIsRanked() throws {
+        // The bug: the rankings row was read first, so a ranked team showed
+        // "Victoria, Australia" while its profile knew the suburb.
+        let profile = try fixture("team", as: TeamProfileResponse.self)
+        let ranked = try fixture("rankings", as: RankingsResponse.self)
+            .rankings.first { $0.number == profile.team.number }
+
+        XCTAssertEqual(profile.team.region, "Canterbury, Victoria, Australia")
+        let shown = TeamLocation.best(of: [profile.team.region, ranked?.region])
+        XCTAssertEqual(shown, "Canterbury, Victoria, Australia")
+    }
+
+    func testTheRicherAnswerWinsFromEitherSide() {
+        XCTAssertEqual(TeamLocation.best(of: ["Victoria, Australia", "Canterbury, Victoria, Australia"]),
+                       "Canterbury, Victoria, Australia")
+        XCTAssertEqual(TeamLocation.best(of: ["Canterbury, Victoria, Australia", "Victoria, Australia"]),
+                       "Canterbury, Victoria, Australia")
+    }
+
+    func testTiesKeepTheFirstCandidate() {
+        // Same detail, so the profile - passed first - is used.
+        XCTAssertEqual(TeamLocation.best(of: ["Ontario, Canada", "Quebec, Canada"]), "Ontario, Canada")
+    }
+
+    func testPlaceholdersAndBlanksAreNotLocations() {
+        XCTAssertNil(TeamLocation.best(of: [nil, nil]))
+        XCTAssertNil(TeamLocation.best(of: ["", "   "]))
+        XCTAssertNil(TeamLocation.best(of: ["Unassigned", "unassigned"]))
+        // A real answer beats a placeholder whichever order they arrive in.
+        XCTAssertEqual(TeamLocation.best(of: ["Unassigned", "Ontario, Canada"]), "Ontario, Canada")
+        XCTAssertEqual(TeamLocation.best(of: ["Ontario, Canada", "Unassigned"]), "Ontario, Canada")
+    }
+
+    func testCountingPlacesIgnoresJunk() {
+        XCTAssertEqual(TeamLocation.places(in: "Richmond Hill, Ontario, Canada"), 3)
+        XCTAssertEqual(TeamLocation.places(in: "Ontario, Canada"), 2)
+        XCTAssertEqual(TeamLocation.places(in: "Canada"), 1)
+        XCTAssertEqual(TeamLocation.places(in: "Ontario, , Canada"), 2)
+        XCTAssertEqual(TeamLocation.places(in: "Ontario, Unassigned"), 1)
+    }
+
+    func testNoRankedTeamLosesDetailAgainstItsOwnProfile() throws {
+        // Across the whole ranking feed, the chosen answer is never poorer
+        // than either candidate.
+        let ranked = try fixture("rankings", as: RankingsResponse.self).rankings
+        for row in ranked.prefix(200) {
+            let shown = TeamLocation.best(of: [nil, row.region])
+            XCTAssertEqual(shown.map(TeamLocation.places), row.region.map(TeamLocation.places))
+        }
+    }
+}

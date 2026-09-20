@@ -36,13 +36,8 @@ public struct VEXEvent: Codable, Sendable, Identifiable, Hashable {
         case levelClass
     }
 
-    /// `date` is a plain calendar day (2026-06-20), not a timestamp.
-    public var day: Date? {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        formatter.timeZone = TimeZone(identifier: "UTC")
-        return formatter.date(from: date)
-    }
+    /// The calendar day this event runs on, at local midnight.
+    public var day: Date? { EventDay.parse(date) }
 
     public var isUpcoming: Bool {
         guard let day else { return false }
