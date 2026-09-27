@@ -1812,6 +1812,29 @@ final class RecordCheckTests: XCTestCase {
         XCTAssertEqual(check.unexplainedWins, 0)
     }
 
+    func testEliminationsDoNotCountAgainstTheStandings() throws {
+        // 19600Z went 7-1-0 in qualification and then played eliminations.
+        // The standings count qualification only, so the eliminations must
+        // not read as a disagreement.
+        let detail = try fixture("event-detail", as: EventDetailResponse.self)
+        let matches = detail.matches(for: "19600Z")
+        XCTAssertTrue(matches.contains { !$0.isQualification && $0.isPlayed },
+                      "the fixture should have 19600Z in eliminations")
+        let check = RecordCheck(standing: try XCTUnwrap(detail.standing(for: "19600Z")), matches: matches)
+        XCTAssertTrue(check.agrees)
+        XCTAssertEqual(check.unexplainedWins, 0)
+        XCTAssertEqual(check.officialSummary, "7\u{2013}1\u{2013}0")
+    }
+
+    func testAGenuineMismatchSurvivesIgnoringEliminations() throws {
+        // 978Z is credited 2-6 but went 1-7 on score in qualification.
+        let detail = try fixture("event-detail", as: EventDetailResponse.self)
+        let check = RecordCheck(standing: try XCTUnwrap(detail.standing(for: "978Z")),
+                                matches: detail.matches(for: "978Z"))
+        XCTAssertFalse(check.agrees)
+        XCTAssertEqual(check.unexplainedWins, 1)
+    }
+
     func testSpotsAWinTheScoresDoNotExplain() throws {
         // 252H: the standings credit two wins, but on score they lost their
         // first match 28-115 and won the second 78-77. The other alliance was
@@ -2117,5 +2140,514 @@ final class TeamLocationTests: XCTestCase {
             let shown = TeamLocation.best(of: [nil, row.region])
             XCTAssertEqual(shown.map(TeamLocation.places), row.region.map(TeamLocation.places))
         }
+    }
+}
+
+/// The config arrives without review, so these tests are mostly about what the
+/// app does with a bad one. A typo in a JSON file should cost one setting, not
+/// the app.
+final class AppConfigTests: XCTestCase {
+    private func decode(_ json: String) throws -> AppConfig {
+        try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8))
+    }
+
+    /// The fixture is generated from `APP_CONFIG_DEFAULTS` in the Worker, so
+    /// this is a contract between two codebases rather than a sample I wrote.
+    /// The two disagreeing silently is the failure mode that has already cost
+    /// this project once, when the live rankings route and the archive scripts
+    /// used different confidence floors.
+    func testWorkerDefaultsAreTheBundledConfig() throws {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/app-config", withExtension: "json"))
+        let served = try JSONDecoder().decode(AppConfig.self, from: Data(contentsOf: url))
+        XCTAssertEqual(served, .bundled)
+        // And a fresh install talking to a Worker nobody has configured yet is
+        // never told to go and update.
+        XCTAssertEqual(served.update.status(forBuild: AppConfigStore.currentBuild), .current)
+    }
+
+    func testEmptyConfigIsTheBundledOne() throws {
+        XCTAssertEqual(try decode("{}"), .bundled)
+    }
+
+    func testUnknownFieldsAreIgnored() throws {
+        // A newer server talking to an older build is the normal case, not an
+        // error: the whole point is that the two ship on different schedules.
+        let config = try decode(#"{"currentSeason":205,"somethingAddedLater":{"a":[1,2]}}"#)
+        XCTAssertEqual(config.currentSeason, 205)
+    }
+
+    func testImplausibleSeasonIsRefused() throws {
+        // Honouring this would point every live tab at a season with no events.
+        for season in ["0", "9999", "-204", "\"204\""] {
+            XCTAssertEqual(try decode(#"{"currentSeason":\#(season)}"#).currentSeason,
+                           AppConfig.bundled.currentSeason,
+                           "season \(season) should not have been accepted")
+        }
+    }
+
+    func testSeasonRolloverIsAccepted() throws {
+        XCTAssertEqual(try decode(#"{"currentSeason":211}"#).currentSeason, 211)
+    }
+
+    func testCacheLifetimesAreClampedNotObeyed() throws {
+        // Zero would turn every scroll into a round trip and walk the app into
+        // the rate limiter - the one config mistake that degrades the service
+        // for everyone, not just the person who made it.
+        let config = try decode(#"{"eventCacheSeconds":0,"defaultCacheSeconds":1e9}"#)
+        XCTAssertEqual(config.eventCacheSeconds, 5)
+        XCTAssertEqual(config.defaultCacheSeconds, 86_400)
+    }
+
+    func testNonsenseCacheLifetimeFallsBack() throws {
+        let config = try decode(#"{"eventCacheSeconds":"soon","directoryCacheSeconds":null}"#)
+        XCTAssertEqual(config.eventCacheSeconds, AppConfig.bundled.eventCacheSeconds)
+        XCTAssertEqual(config.directoryCacheSeconds, AppConfig.bundled.directoryCacheSeconds)
+    }
+
+    func testProgramSlugIsValidated() throws {
+        XCTAssertEqual(try decode(#"{"program":"VURC"}"#).program, "VURC")
+        // A slug with a slash in it would build a link to somewhere else.
+        XCTAssertEqual(try decode(#"{"program":"../admin"}"#).program, AppConfig.bundled.program)
+        XCTAssertEqual(try decode(#"{"program":""}"#).program, AppConfig.bundled.program)
+    }
+
+    func testFlagsAreFreeFormWithADefault() throws {
+        let config = try decode(#"{"flags":{"bracket":false}}"#)
+        XCTAssertFalse(config.flag("bracket", default: true))
+        // A flag this build has never heard of is not an error, and a flag the
+        // server has not set yet reads as whatever the caller asked for.
+        XCTAssertTrue(config.flag("momentum", default: true))
+        XCTAssertFalse(config.flag("momentum"))
+    }
+
+    func testBrokenAnnouncementDoesNotTakeTheConfigWithIt() throws {
+        // Missing `title`, so the announcement cannot decode. The season beside
+        // it still must.
+        let config = try decode(#"{"currentSeason":205,"announcement":{"id":"x"}}"#)
+        XCTAssertNil(config.announcement)
+        XCTAssertEqual(config.currentSeason, 205)
+    }
+
+    // MARK: - Update status
+
+    private func update(latest: Int, minimum: Int = 0) throws -> UpdateInfo {
+        try JSONDecoder().decode(
+            UpdateInfo.self,
+            from: Data(#"{"latestBuild":\#(latest),"minimumBuild":\#(minimum)}"#.utf8)
+        )
+    }
+
+    func testUpdateStatusBoundaries() throws {
+        let info = try update(latest: 10, minimum: 5)
+        XCTAssertEqual(info.status(forBuild: 4), .required)
+        XCTAssertEqual(info.status(forBuild: 5), .available)
+        XCTAssertEqual(info.status(forBuild: 9), .available)
+        XCTAssertEqual(info.status(forBuild: 10), .current)
+        // A build ahead of the config - a local build, or a config that has not
+        // caught up with a release - is current, not broken.
+        XCTAssertEqual(info.status(forBuild: 99), .current)
+    }
+
+    func testMinimumAboveLatestIsCappedAtLatest() throws {
+        // Otherwise a fat-fingered minimum tells every reader to get a build
+        // that the same document says does not exist.
+        XCTAssertEqual(try update(latest: 10, minimum: 400).minimumBuild, 10)
+    }
+
+    func testDefaultConfigNeverAsksAnyoneToUpdate() throws {
+        XCTAssertEqual(AppConfig.bundled.update.status(forBuild: 0), .current)
+    }
+
+    func testMalformedLinkIsDroppedNotCrashed() throws {
+        let info = try JSONDecoder().decode(UpdateInfo.self, from: Data(#"{"url":"not a url"}"#.utf8))
+        XCTAssertNil(info.link?.host)
+    }
+}
+
+final class AppConfigStoreTests: XCTestCase {
+    private var suite: String!
+    private var defaults: UserDefaults!
+
+    override func setUp() {
+        super.setUp()
+        suite = "config-test-" + UUID().uuidString
+        defaults = UserDefaults(suiteName: suite)
+    }
+
+    override func tearDown() {
+        defaults.removePersistentDomain(forName: suite)
+        super.tearDown()
+    }
+
+    private func store(build: Int = 1) -> AppConfigStore {
+        AppConfigStore(defaults: defaults, key: "config", build: build)
+    }
+
+    func testStartsBundledAndReadsAStoredConfigBack() throws {
+        XCTAssertEqual(store().config, .bundled)
+
+        let stored = try JSONDecoder().decode(AppConfig.self, from: Data(#"{"currentSeason":205}"#.utf8))
+        defaults.set(try JSONEncoder().encode(stored), forKey: "config")
+
+        // Read synchronously in init: the first frame has to be drawn with the
+        // right season, and waiting on the network for that means either a
+        // blank launch or one that changes under the reader a moment later.
+        XCTAssertEqual(store().config.currentSeason, 205)
+    }
+
+    func testCorruptStoredConfigFallsBackInsteadOfFailing() {
+        defaults.set(Data("{ this is not json".utf8), forKey: "config")
+        XCTAssertEqual(store().config, .bundled)
+    }
+
+    func testAvailableUpdateCanBeDismissedUntilANewerOneArrives() throws {
+        let subject = store(build: 3)
+        subject.adopt(try Self.config(latest: 5, minimum: 0))
+        XCTAssertEqual(subject.updateStatus, .available)
+        XCTAssertNotNil(subject.pendingUpdate)
+
+        subject.dismissUpdate()
+        XCTAssertNil(subject.pendingUpdate, "a dismissed nudge should stay dismissed")
+
+        subject.adopt(try Self.config(latest: 6, minimum: 0))
+        XCTAssertNotNil(subject.pendingUpdate, "a newer build is a new thing to say")
+    }
+
+    func testRequiredUpdateCannotBeDismissed() throws {
+        let subject = store(build: 1)
+        subject.adopt(try Self.config(latest: 5, minimum: 4))
+        XCTAssertEqual(subject.updateStatus, .required)
+        subject.dismissUpdate()
+        XCTAssertNotNil(subject.pendingUpdate)
+    }
+
+    func testAnnouncementIsShownOnceAndRememberedAcrossLaunches() throws {
+        let json = #"{"announcement":{"id":"worlds","title":"Worlds is live"}}"#
+        let first = store()
+        first.adopt(try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8)))
+        XCTAssertEqual(first.pendingAnnouncement?.title, "Worlds is live")
+        first.dismissAnnouncement("worlds")
+        XCTAssertNil(first.pendingAnnouncement)
+
+        let next = store()
+        next.adopt(try JSONDecoder().decode(AppConfig.self, from: Data(json.utf8)))
+        XCTAssertNil(next.pendingAnnouncement, "dismissal should survive a relaunch")
+    }
+
+    private static func config(latest: Int, minimum: Int) throws -> AppConfig {
+        try JSONDecoder().decode(
+            AppConfig.self,
+            from: Data(#"{"update":{"latestBuild":\#(latest),"minimumBuild":\#(minimum)}}"#.utf8)
+        )
+    }
+}
+
+/// Team numbers are the one string this app must always be able to draw, so
+/// these are mostly completeness checks: a font missing a glyph does not fail
+/// loudly, it quietly falls back to plain text, which is exactly the kind of
+/// regression nobody notices until a team with a Q in it opens their profile.
+final class StrokeFontTests: XCTestCase {
+    private let alphabet = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+    func testEveryFontDrawsEveryCharacterATeamNumberCanContain() {
+        for font in StrokeFont.all {
+            for character in alphabet {
+                XCTAssertNotNil(font.strokes(for: character),
+                                "\(font.name) has no glyph for \(character)")
+            }
+            XCTAssertTrue(font.canDraw("31260X"), "\(font.name) cannot draw a real team number")
+            XCTAssertTrue(font.canDraw("2775v"), "\(font.name) must accept lower case")
+        }
+    }
+
+    func testUndrawableTextIsReportedRatherThanPartlyDrawn() {
+        // The view falls back to plain text on false. Returning true here and
+        // dropping the character would leave a gap in the middle of a number.
+        XCTAssertFalse(StrokeFont.marker.canDraw("12-3"))
+        XCTAssertFalse(StrokeFont.marker.canDraw(""))
+    }
+
+    func testFontIdsAreUniqueAndResolve() {
+        XCTAssertEqual(Set(StrokeFont.all.map(\.id)).count, StrokeFont.all.count)
+        for font in StrokeFont.all {
+            XCTAssertEqual(StrokeFont.named(font.id), font)
+        }
+        // An id from a future build, or a corrupted preference, must not leave
+        // the profile with no number on it.
+        XCTAssertEqual(StrokeFont.named("no-such-font"), .marker)
+    }
+
+    func testBlockIsBuiltFromStraightSegmentsOnly() {
+        // What makes it read as drafting rather than handwriting. A stray curve
+        // would be invisible in review and obvious on screen.
+        for (character, strokes) in StrokeGlyphs.blockGlyphs {
+            for stroke in strokes {
+                XCTAssertFalse(stroke.contains("C"), "\(character) has a curve in a straight-line font")
+            }
+        }
+    }
+
+    func testGlyphsStayInsideTheirBox() {
+        // Every font shares one coordinate space, which is what lets them be
+        // swapped for one another without anything else changing.
+        for font in StrokeFont.all {
+            for (character, strokes) in font.glyphs {
+                for value in strokes.flatMap(Self.coordinates) {
+                    XCTAssertTrue((-2...105).contains(value),
+                                  "\(font.name) \(character) strays to \(value)")
+                }
+            }
+        }
+    }
+
+    func testSlantLeansRightAndKeepsTheBaseline() {
+        let lean = StrokeFont.slant.lean
+        // A point on the baseline is the pivot and must not move: otherwise the
+        // whole number slides sideways out of its measured bounds.
+        let onBaseline = CGPoint(x: 30, y: StrokeFont.baseline).applying(lean)
+        XCTAssertEqual(onBaseline.x, 30, accuracy: 0.001)
+        XCTAssertEqual(onBaseline.y, StrokeFont.baseline, accuracy: 0.001)
+
+        // The top of the glyph leans right, not left.
+        let atCapHeight = CGPoint(x: 30, y: 6).applying(lean)
+        XCTAssertGreaterThan(atCapHeight.x, 30)
+        XCTAssertEqual(atCapHeight.x, 30 + 0.26 * (StrokeFont.baseline - 6), accuracy: 0.001)
+        XCTAssertEqual(atCapHeight.y, 6, accuracy: 0.001, "a shear must not change height")
+    }
+
+    func testUprightFontsAreNotSheared() {
+        for font in [StrokeFont.marker, .block] {
+            XCTAssertTrue(font.lean.isIdentity, "\(font.name) should stand upright")
+        }
+    }
+
+    func testEachFontWritesInItsOwnHand() {
+        // The point of the feature: picking a font picks a way of writing, not
+        // just a set of shapes.
+        XCTAssertTrue(StrokeFont.marker.hand.roundCap)
+        XCTAssertFalse(StrokeFont.block.hand.roundCap, "a drafting pen is not round")
+        // The marker eases off through the last character; the drafting hand
+        // holds its pace.
+        XCTAssertGreaterThan(StrokeFont.marker.hand.finalDrag, StrokeFont.block.hand.finalDrag)
+        // The slant is the quick hand.
+        XCTAssertLessThan(StrokeFont.slant.hand.secondsPerUnit, StrokeFont.marker.hand.secondsPerUnit)
+        XCTAssertLessThan(StrokeFont.slant.hand.lift, StrokeFont.marker.hand.lift)
+    }
+
+    private static func coordinates(_ stroke: String) -> [Double] {
+        stroke.split(whereSeparator: { " ,MLC".contains($0) }).compactMap(Double.init)
+    }
+}
+
+/// What a tap on a bracket card has to carry through to the match screen.
+final class MatchRefTests: XCTestCase {
+    private func division() throws -> Division {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: "Fixtures/event-detail", withExtension: "json"))
+        let detail = try JSONDecoder().decode(EventDetailResponse.self, from: Data(contentsOf: url))
+        return try XCTUnwrap(detail.divisions.first)
+    }
+
+    func testASlotCarriesEveryGameNotJustTheOneOnTheCard() throws {
+        let rounds = try division().bracket
+        let replayed = try XCTUnwrap(
+            rounds.flatMap { $0.slots.compactMap { $0 } }.first { $0.wasReplayed },
+            "this fixture is the replay case; without one the test proves nothing"
+        )
+        let ref = replayed.reference(round: "Round of 16", division: nil)
+        // The card shows the last game. Opening it is how a reader sees the
+        // replay it stood in for, so all of them have to travel.
+        XCTAssertEqual(ref.games.count, replayed.games.count)
+        XCTAssertGreaterThan(ref.games.count, 1)
+        XCTAssertEqual(ref.latest, replayed.match)
+    }
+
+    func testTheTitleNamesTheRoundAndTheSlot() throws {
+        let round = try XCTUnwrap(try division().bracket.first)
+        let slot = try XCTUnwrap(round.slots.compactMap { $0 }.first)
+        let ref = slot.reference(round: round.label, division: "Science")
+        XCTAssertTrue(ref.title.hasPrefix("Round of 16"), "got \(ref.title)")
+        XCTAssertTrue(ref.title.contains("\(slot.instance)"))
+        XCTAssertEqual(ref.division, "Science")
+    }
+
+    func testTeamsAreDeduplicatedAcrossGames() throws {
+        let rounds = try division().bracket
+        let replayed = try XCTUnwrap(rounds.flatMap { $0.slots.compactMap { $0 } }.first { $0.wasReplayed })
+        let ref = replayed.reference(round: "Round of 16", division: nil)
+        // A replay lists the same teams again. The match screen offers one link
+        // per team, so listing anyone twice would be a duplicate row.
+        XCTAssertEqual(Set(ref.teams.map { $0.uppercased() }).count, ref.teams.count)
+        XCTAssertFalse(ref.teams.isEmpty)
+    }
+
+    func testTheFinalCarriesItsSeriesScore() throws {
+        let final = try XCTUnwrap(try division().final)
+        let ref = final.reference(division: nil)
+        XCTAssertEqual(ref.title, "Final")
+        XCTAssertEqual(ref.series?.redWins, final.redWins)
+        XCTAssertEqual(ref.series?.blueWins, final.blueWins)
+        XCTAssertEqual(ref.games.count, final.games.count)
+    }
+
+    func testTwoSlotsAreDistinctNavigationValues() throws {
+        // They are pushed by value, so two slots that hash alike would send a
+        // reader to the wrong match.
+        let slots = try division().bracket.flatMap { round in
+            round.slots.compactMap { $0.map { $0.reference(round: round.label, division: nil) } }
+        }
+        XCTAssertEqual(Set(slots).count, slots.count)
+    }
+}
+
+final class StrokePathCloseTests: XCTestCase {
+    func testClosedPathAddsTheReturningSegmentToItsLength() {
+        // Length drives how long the pen takes, so the closing side has to
+        // count or the last edge of a squared zero is drawn in no time.
+        let open = StrokePathParser.parse("M0,0 L30,0 L30,30 L0,30")
+        let closed = StrokePathParser.parse("M0,0 L30,0 L30,30 L0,30 Z")
+        XCTAssertEqual(open.approximateLength, 90, accuracy: 0.001)
+        XCTAssertEqual(closed.approximateLength, 120, accuracy: 0.001)
+    }
+
+    func testClosingIsWhatJoinsTheCorner() {
+        // A rectangle written back to its own start is not closed: the first
+        // and last points are two stroke ends that happen to coincide, and a
+        // square cap leaves a notch there. `Z` is the difference.
+        let retraced = StrokePathParser.parse("M0,0 L30,0 L30,30 L0,30 L0,0")
+        let closed = StrokePathParser.parse("M0,0 L30,0 L30,30 L0,30 Z")
+        XCTAssertEqual(retraced.approximateLength, closed.approximateLength, accuracy: 0.001)
+        XCTAssertFalse(retraced.path.isEmpty)
+        XCTAssertEqual(retraced.path.boundingRect, closed.path.boundingRect)
+    }
+
+    func testAnUnknownCommandIsIgnoredRatherThanThrowing() {
+        // The glyph tables are hand-written; a typo should cost one stroke.
+        XCTAssertEqual(StrokePathParser.parse("M0,0 L10,0 Q5,5 10,10").approximateLength, 10, accuracy: 0.001)
+    }
+}
+
+final class StrengthProfileTests: XCTestCase {
+    private func fixture(_ name: String) throws -> EventDetailResponse {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures"))
+        return try JSONDecoder().decode(EventDetailResponse.self, from: Data(contentsOf: url))
+    }
+
+    func testAWPIsWhatIsLeftOfWinPointsAfterWinsAndTies() throws {
+        for name in ["event-detail", "event-dq", "event-live", "event-multi"] {
+            for row in try fixture(name).divisions.flatMap(\.rankings) {
+                XCTAssertGreaterThanOrEqual(try XCTUnwrap(StrengthProfile.awpCount(row)), 0, "\(name) \(row.team.name)")
+            }
+        }
+    }
+
+    func testPercentilePlacesBestAtOneAndWorstAtZero() {
+        XCTAssertEqual(StrengthProfile.percentile(10, in: [10, 5, 1]), 1)
+        XCTAssertEqual(StrengthProfile.percentile(1, in: [10, 5, 1]), 0)
+        XCTAssertEqual(StrengthProfile.percentile(1, in: [10, 5, 1], lowerIsBetter: true), 1)
+        XCTAssertEqual(StrengthProfile.percentile(5, in: [5, 5, 1]), 0.75)
+        XCTAssertNil(StrengthProfile.percentile(5, in: [5]))
+        XCTAssertNil(StrengthProfile.percentile(nil, in: [5, 4]))
+    }
+
+    func testEverySeededTeamGetsSixAxesOnOneScale() throws {
+        let detail = try fixture("event-detail")
+        for row in detail.divisions.flatMap(\.rankings) {
+            let profile = try XCTUnwrap(detail.strengthProfile(for: row.team.name))
+            XCTAssertEqual(profile.axes.map(\.kind), StrengthAxis.Kind.allCases)
+            for axis in profile.axes {
+                guard let score = axis.score, let place = axis.place else { continue }
+                XCTAssertTrue((0...1).contains(score), "\(row.team.name) \(axis.label)")
+                XCTAssertTrue((1...axis.of).contains(place))
+            }
+        }
+    }
+
+    /// The same figures the website shows for the same payload.
+    func testTopSeedMatchesTheWebsite() throws {
+        let profile = try XCTUnwrap(try fixture("event-detail").strengthProfile(for: "19600Z"))
+        let axes = Dictionary(uniqueKeysWithValues: profile.axes.map { ($0.kind, $0) })
+        XCTAssertEqual(axes[.opr]?.display, "110.4")
+        XCTAssertEqual(axes[.opr]?.place, 1)
+        XCTAssertEqual(axes[.ccwm]?.place, 2)
+        XCTAssertEqual(axes[.dpr]?.place, 17)
+        XCTAssertEqual(axes[.awp]?.display, "2 in 8")
+        XCTAssertEqual(axes[.winRate]?.display, "88%")
+        XCTAssertEqual(axes[.skills]?.display, "148")
+        XCTAssertEqual(axes[.skills]?.place, 4)
+        XCTAssertEqual(profile.teams, 41)
+    }
+
+    func testAnUnseededTeamHasNoProfile() throws {
+        XCTAssertNil(try fixture("event-detail").strengthProfile(for: "NOPE1"))
+    }
+}
+
+/// Loading a profile a season at a time, and folding seasons together.
+final class ProfileSeasonTests: XCTestCase {
+    private func profile(_ name: String) throws -> TeamProfileResponse {
+        let url = try XCTUnwrap(Bundle.module.url(forResource: name, withExtension: "json", subdirectory: "Fixtures"))
+        return try JSONDecoder().decode(TeamProfileResponse.self, from: Data(contentsOf: url))
+    }
+
+    /// Two season-scoped responses, merged, hold exactly what the one
+    /// all-seasons response does - so scoping loses nothing.
+    func testMergingTwoSeasonsReproducesTheFullProfile() throws {
+        let merged = try profile("team-season-204").merging(profile("team-season-197"))
+        let full = try profile("team-all-seasons")
+
+        XCTAssertEqual(merged.loadedSeasonIds, [197, 204])
+        XCTAssertEqual(Set(merged.rankings ?? []), Set(full.rankings ?? []))
+        XCTAssertEqual(Set(merged.awards ?? []), Set(full.awards ?? []))
+        XCTAssertEqual(Set(merged.skills ?? []), Set(full.skills ?? []))
+        XCTAssertEqual(Set(merged.ratingHistory), Set(full.ratingHistory))
+        XCTAssertEqual(merged.events, full.events)
+        XCTAssertEqual(merged.seasons, full.seasons)
+    }
+
+    /// The picker is complete from the first, one-season response: the event
+    /// list is not scoped, so every season the team played is offered.
+    func testTheFirstSeasonAloneOffersEverySeason() throws {
+        let first = try profile("team-season-204")
+        XCTAssertEqual(first.seasons.map(\.id), [204, 197])
+        XCTAssertTrue(first.hasLoaded(season: 204))
+        XCTAssertFalse(first.hasLoaded(season: 197))
+    }
+
+    /// Reading a season again replaces its rows rather than doubling them.
+    func testMergingASeasonTwiceDoesNotDuplicateRows() throws {
+        let once = try profile("team-season-204").merging(profile("team-season-197"))
+        let twice = try once.merging(profile("team-season-197"))
+        XCTAssertEqual(twice.rankings?.count, once.rankings?.count)
+        XCTAssertEqual(twice.ratingHistory.count, once.ratingHistory.count)
+    }
+
+    /// A response from before scoping existed carries everything.
+    func testAnUnscopedResponseCountsAsFullyLoaded() throws {
+        XCTAssertTrue(try profile("team").hasLoaded(season: 197))
+    }
+}
+
+/// Which responses are kept on disk between launches, and under what name.
+final class SnapshotNameTests: XCTestCase {
+    func testTheWorldRankingTheEventsListAndProfilesAreKept() {
+        XCTAssertEqual(VEXRankAPI.snapshotName(for: "/api/rankings?data=v49"), "rankings")
+        XCTAssertEqual(VEXRankAPI.snapshotName(for: "/api/events?season=204&classification=v49"), "events-204")
+        XCTAssertEqual(VEXRankAPI.snapshotName(for: "/api/teams/31260x?profile=v8&season=204"), "team-31260X-204")
+    }
+
+    /// Live standings must never be served from an earlier launch, and an
+    /// all-seasons profile is not what the screen asks for any more.
+    func testEventStandingsAndUnscopedProfilesAreNot() {
+        XCTAssertNil(VEXRankAPI.snapshotName(for: "/api/events/64392?results=v49"))
+        XCTAssertNil(VEXRankAPI.snapshotName(for: "/api/teams/31260X?profile=v8"))
+        XCTAssertNil(VEXRankAPI.snapshotName(for: "/api/team-directory"))
+    }
+
+    /// The name comes from API input, so it cannot be allowed to leave the
+    /// snapshot directory.
+    func testANameCannotEscapeTheDirectory() throws {
+        let name = try XCTUnwrap(VEXRankAPI.snapshotName(for: "/api/teams/..%2F..%2Fx?profile=v8&season=../1"))
+        XCTAssertFalse(name.contains("/"))
+        XCTAssertFalse(name.contains("."))
     }
 }

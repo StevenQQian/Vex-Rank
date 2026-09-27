@@ -233,7 +233,7 @@ final class TeamsDirectoryModel {
     /// responsive field and a stuttering one.
     private var indexed: [(team: DirectoryTeam, haystack: [UInt8])] = []
     private var teams: [DirectoryTeam] = []
-    private let api = VEXRankAPI()
+    private let api = VEXRankAPI.shared
 
     /// Builds the search index off the main actor.
     ///

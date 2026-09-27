@@ -21,6 +21,8 @@ public struct TeamMatch: Identifiable, Sendable, Hashable {
     public let scoreFor: Int?
     public let scoreAgainst: Int?
     public let isPlayed: Bool
+    /// A qualification match, the only kind the event's standings count.
+    public let isQualification: Bool
 
     public var outcome: Outcome {
         guard isPlayed, let scoreFor, let scoreAgainst else { return .scheduled }
@@ -89,9 +91,12 @@ public struct RecordCheck: Sendable, Hashable {
         officialWins = standing.wins
         officialLosses = standing.losses
         officialTies = standing.ties
-        scoredWins = matches.filter { $0.outcome == .won }.count
-        scoredLosses = matches.filter { $0.outcome == .lost }.count
-        scoredTies = matches.filter { $0.outcome == .tied }.count
+        // The standings are qualification only; eliminations would make every
+        // team that reached them look as if the two disagree.
+        let counted = matches.filter(\.isQualification)
+        scoredWins = counted.filter { $0.outcome == .won }.count
+        scoredLosses = counted.filter { $0.outcome == .lost }.count
+        scoredTies = counted.filter { $0.outcome == .tied }.count
     }
 }
 
@@ -153,7 +158,8 @@ extension EventDetailResponse {
                     // draw rather than as a fixture.
                     scoreFor: played ? (onRed ? match.red?.score : match.blue?.score) : nil,
                     scoreAgainst: played ? (onRed ? match.blue?.score : match.red?.score) : nil,
-                    isPlayed: played
+                    isPlayed: played,
+                    isQualification: match.isQualification
                 ))
             }
         }

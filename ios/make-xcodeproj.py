@@ -57,7 +57,7 @@ SETTINGS_TARGET = f'''
 \t\t\t\tDEVELOPMENT_TEAM = {TEAM};
 \t\t\t\tGENERATE_INFOPLIST_FILE = YES;
 \t\t\t\tINFOPLIST_KEY_CFBundleDisplayName = "Makapaka Scout";
-\t\t\t\tINFOPLIST_KEY_CFBundleName = "Makapaka Scout";\n\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;
+\t\t\t\tINFOPLIST_KEY_CFBundleName = "Makapaka Scout";\n\t\t\t\tINFOPLIST_KEY_UILaunchScreen_Generation = YES;\n\t\t\t\tINFOPLIST_KEY_UILaunchScreen_BackgroundColor = LaunchBackground;
 \t\t\t\tINFOPLIST_KEY_UISupportedInterfaceOrientations = UIInterfaceOrientationPortrait;
 \t\t\t\tIPHONEOS_DEPLOYMENT_TARGET = 17.0;
 \t\t\t\tMARKETING_VERSION = 1.0;

@@ -12,6 +12,8 @@ import VEXRankKit
 @available(iOS 17.0, *)
 struct BracketView: View {
     let division: Division
+    /// Shown on the match screen when the event has more than one division.
+    var divisionLabel: String? = nil
     @Environment(\.vexTheme) private var theme
 
     private static let slotHeight: CGFloat = 78
@@ -48,7 +50,11 @@ struct BracketView: View {
                 ForEach(Array(round.slots.enumerated()), id: \.offset) { _, slot in
                     Group {
                         if let slot {
-                            card(slot)
+                            NavigationLink(value: slot.reference(round: round.label,
+                                                                 division: divisionLabel)) {
+                                card(slot)
+                            }
+                            .buttonStyle(.plain)
                         } else {
                             // The empty slot is kept so later rounds stay level
                             // with the matches that feed them.
@@ -114,21 +120,24 @@ struct BracketView: View {
             Text("FINAL").font(.caption2.weight(.semibold)).tracking(1.2)
                 .foregroundStyle(.secondary)
                 .padding(.bottom, 6)
-            VStack(spacing: 0) {
-                Text("\(final.redWins) : \(final.blueWins)")
-                    .font(.system(.title3, design: .monospaced, weight: .semibold))
-                    .foregroundStyle(theme.accent)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                Divider()
-                finalSide(final.red, wins: final.redWins, colour: .red, letter: "R",
-                          won: final.winner == "red", decided: final.winner != nil)
-                Divider()
-                finalSide(final.blue, wins: final.blueWins, colour: .blue, letter: "B",
-                          won: final.winner == "blue", decided: final.winner != nil)
+            NavigationLink(value: final.reference(division: divisionLabel)) {
+                VStack(spacing: 0) {
+                    Text("\(final.redWins) : \(final.blueWins)")
+                        .font(.system(.title3, design: .monospaced, weight: .semibold))
+                        .foregroundStyle(theme.accent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                    Divider()
+                    finalSide(final.red, wins: final.redWins, colour: .red, letter: "R",
+                              won: final.winner == "red", decided: final.winner != nil)
+                    Divider()
+                    finalSide(final.blue, wins: final.blueWins, colour: .blue, letter: "B",
+                              won: final.winner == "blue", decided: final.winner != nil)
+                }
+                .background(theme.surfaceRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            .background(theme.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .buttonStyle(.plain)
             .frame(height: Self.slotHeight * pow(2, CGFloat(depth)), alignment: .center)
         }
         .frame(width: Self.columnWidth)

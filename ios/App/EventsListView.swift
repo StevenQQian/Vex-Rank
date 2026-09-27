@@ -139,12 +139,20 @@ final class EventsModel {
         var isLoaded: Bool { if case .loaded = self { return true }; return false }
     }
     private(set) var state: State = .loading
-    private let api = VEXRankAPI()
+    private let api = VEXRankAPI.shared
 
     @MainActor
     func load() async {
-        state = .loading
+        // The last list first: uncached, the events feed took about two
+        // seconds, and the calendar has barely changed since the last look.
+        if case .loaded = state {} else if let known = await api.lastKnownEvents() {
+            state = .loaded(known.events)
+        }
         do { state = .loaded(try await api.events().events) }
-        catch { state = .failed(error.localizedDescription) }
+        catch {
+            // A list that is a day old beats swapping a working one for an error.
+            if case .loaded = state { return }
+            state = .failed(error.localizedDescription)
+        }
     }
 }

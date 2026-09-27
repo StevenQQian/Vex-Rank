@@ -57,6 +57,52 @@ public enum StrokeGlyphs {
         "Z": ["M10,6 L50,6 L10,95 L50,95"],
     ]
 
+
+    /// A drafting alphabet: the same box and baseline as `glyphs`, but built
+    /// from straight segments only, so the two can be swapped for one another
+    /// without anything else changing.
+    ///
+    /// The zero is slashed. Squared off, an unslashed zero and a capital O are
+    /// the same rectangle, and team numbers are exactly the place that matters.
+    public static let blockGlyphs: [Character: [String]] = [
+        "0": ["M12,6 L48,6 L48,95 L12,95 Z", "M17,88 L43,13"],
+        "1": ["M14,20 L30,6 L30,95", "M14,95 L46,95"],
+        "2": ["M10,16 L10,6 L50,6 L50,50 L10,95 L50,95"],
+        "3": ["M10,6 L50,6 L50,95 L10,95", "M18,50 L50,50"],
+        "4": ["M42,95 L42,6 L8,62 L54,62"],
+        "5": ["M50,6 L12,6 L12,48 L50,48 L50,95 L10,95"],
+        "6": ["M50,6 L12,6 L12,95 L50,95 L50,50 L12,50"],
+        "7": ["M8,6 L52,6 L24,95"],
+        "8": ["M12,6 L48,6 L48,95 L12,95 Z", "M12,50 L48,50"],
+        "9": ["M48,95 L48,6 L12,6 L12,50 L48,50"],
+        "A": ["M8,95 L30,6 L52,95", "M17,60 L43,60"],
+        "B": ["M12,6 L12,95", "M12,6 L44,6 L44,48 L12,48", "M12,48 L48,48 L48,95 L12,95"],
+        "C": ["M50,6 L10,6 L10,95 L50,95"],
+        "D": ["M12,6 L40,6 L50,18 L50,83 L40,95 L12,95 Z"],
+        "E": ["M50,6 L12,6 L12,95 L50,95", "M12,50 L42,50"],
+        "F": ["M12,95 L12,6 L50,6", "M12,50 L42,50"],
+        "G": ["M50,6 L10,6 L10,95 L50,95 L50,54 L30,54"],
+        "H": ["M10,6 L10,95", "M10,50 L50,50", "M50,6 L50,95"],
+        "I": ["M14,6 L46,6", "M30,6 L30,95", "M14,95 L46,95"],
+        "J": ["M46,6 L46,95 L12,95 L12,72"],
+        "K": ["M12,6 L12,95", "M50,6 L12,52", "M24,42 L52,95"],
+        "L": ["M12,6 L12,95 L50,95"],
+        "M": ["M8,95 L8,6 L30,58 L52,6 L52,95"],
+        "N": ["M10,95 L10,6 L50,95 L50,6"],
+        "O": ["M10,6 L50,6 L50,95 L10,95 Z"],
+        "P": ["M12,95 L12,6 L46,6 L46,52 L12,52"],
+        "Q": ["M10,6 L50,6 L50,95 L10,95 Z", "M34,72 L54,99"],
+        "R": ["M12,95 L12,6 L46,6 L46,48 L12,48", "M30,48 L52,95"],
+        "S": ["M50,6 L12,6 L12,48 L48,48 L48,95 L10,95"],
+        "T": ["M7,6 L53,6", "M30,6 L30,95"],
+        "U": ["M10,6 L10,95 L50,95 L50,6"],
+        "V": ["M8,6 L30,95 L52,6"],
+        "W": ["M4,6 L16,95 L30,40 L44,95 L56,6"],
+        "X": ["M10,6 L50,95", "M50,6 L10,95"],
+        "Y": ["M10,6 L30,50 L50,6", "M30,50 L30,95"],
+        "Z": ["M10,6 L50,6 L10,95 L50,95"],
+    ]
+
     /// Ordered strokes for one character, or nil when it has no glyph.
     public static func strokes(for character: Character) -> [String]? {
         glyphs[Character(character.uppercased())]

@@ -100,3 +100,60 @@ extension Division {
         numbers.map { $0.uppercased() }.sorted().joined(separator: "|")
     }
 }
+
+/// A bracket match, as a navigation destination.
+///
+/// Carries every game in the slot rather than only the one the card shows: a
+/// replayed slot and a final series are both several games, and the reason to
+/// open one is usually to see the games the card had no room for.
+public struct MatchRef: Hashable, Sendable {
+    public let title: String
+    /// Which division it belongs to, when the event has more than one.
+    public let division: String?
+    public let games: [DivisionMatch]
+    /// Set for a final, where the series score is the headline rather than any
+    /// single game's.
+    public let series: (red: [String], blue: [String], redWins: Int, blueWins: Int)?
+
+    public init(title: String, division: String?, games: [DivisionMatch],
+                series: (red: [String], blue: [String], redWins: Int, blueWins: Int)? = nil) {
+        self.title = title
+        self.division = division
+        self.games = games
+        self.series = series
+    }
+
+    /// The game a reader means when they tap the card: the one it was showing.
+    public var latest: DivisionMatch? { games.last }
+
+    public static func == (a: MatchRef, b: MatchRef) -> Bool {
+        a.title == b.title && a.division == b.division && a.games == b.games
+            && a.series?.redWins == b.series?.redWins && a.series?.blueWins == b.series?.blueWins
+    }
+
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(title)
+        hasher.combine(division)
+        hasher.combine(games)
+    }
+
+    /// Every team in the slot, de-duplicated, in the order they appear.
+    public var teams: [String] {
+        var seen = Set<String>()
+        return games.flatMap { ($0.alliances ?? []).flatMap(\.numbers) }
+            .filter { seen.insert($0.uppercased()).inserted }
+    }
+}
+
+extension BracketSlot {
+    public func reference(round: String, division: String?) -> MatchRef {
+        MatchRef(title: "\(round) · Match \(instance)", division: division, games: games)
+    }
+}
+
+extension BracketFinal {
+    public func reference(division: String?) -> MatchRef {
+        MatchRef(title: "Final", division: division, games: games,
+                 series: (red, blue, redWins, blueWins))
+    }
+}

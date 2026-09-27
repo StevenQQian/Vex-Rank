@@ -28,6 +28,8 @@ struct TeamProfileView: View {
     }
     @Environment(\.vexTheme) private var theme
     @Environment(\.favouriteTeams) private var favourites
+    @Environment(\.appConfig) private var appConfig
+    @Environment(\.numberFont) private var numberFont
     @State private var model = TeamProfileModel()
     /// Seeded at init rather than assigned in `.task`: the view is recreated
     /// as the profile loads, and an assignment made from the task raced that -
@@ -59,13 +61,20 @@ struct TeamProfileView: View {
                         originPortal
                         upcoming
                         seasonPicker(profile)
-                        seasonBand(profile, season: season).reveal()
-                        let trend = profile.ratingHistory
-                            .filter { season == nil || $0.seasonId == season }
-                        if trend.count > 1 { chart(trend).reveal() }
-                        skills(profile, season: season).reveal()
-                        competitionHistory(profile, season: season).reveal()
-                        awards(profile, season: season).reveal()
+                        if let season, !profile.hasLoaded(season: season) {
+                            // Its rows are on their way. Drawn before they
+                            // land, the history would read "no elimination
+                            // result" for every event of a season that has one.
+                            seasonLoading(season)
+                        } else {
+                            seasonBand(profile, season: season).reveal()
+                            let trend = profile.ratingHistory
+                                .filter { season == nil || $0.seasonId == season }
+                            if trend.count > 1 { chart(trend).reveal() }
+                            skills(profile, season: season).reveal()
+                            competitionHistory(profile, season: season).reveal()
+                            awards(profile, season: season).reveal()
+                        }
                     } else if let message = model.error {
                         Text(message).font(.footnote).foregroundStyle(.secondary)
                     } else {
@@ -96,6 +105,31 @@ struct TeamProfileView: View {
         .task {
             await model.load(ref: ref, ranking: ranking)
         }
+        // The season on screen, whichever way it was chosen - the picker, the
+        // launch argument, or the default of the newest season the team
+        // played, which need not be the one loaded first.
+        // Keyed on the profile's arrival too: a season chosen before there is
+        // a profile to merge into (by launch argument, or a picker restored
+        // too early) would otherwise be asked for once, turned away, and never
+        // asked for again - leaving a spinner that does not end.
+        .task(id: "\(visibleSeason ?? 0)-\(model.profile != nil)") {
+            if let visibleSeason { await model.ensure(season: visibleSeason, number: number) }
+        }
+    }
+
+    private var visibleSeason: Int? { season ?? model.profile?.seasons.first?.id }
+
+    @ViewBuilder
+    private func seasonLoading(_ season: Int) -> some View {
+        if let message = model.seasonError[season] {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+                Button("Retry") { Task { await model.ensure(season: season, number: number) } }
+                    .tint(theme.accent)
+            }
+        } else {
+            ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
+        }
     }
 
     private var header: some View {
@@ -108,11 +142,16 @@ struct TeamProfileView: View {
             // Drawn stroke by stroke, the suffix in the theme accent.
             SignedNumberView(
                 text: number,
+                font: numberFont,
                 accentFrom: number.prefix(while: \.isNumber).count,
                 ink: .white,
                 accent: theme.accent
             )
             .frame(height: 96)
+            // Re-identified on the font, so choosing one rewrites the number in
+            // it there and then rather than leaving the old hand on screen
+            // until the next time the profile is opened.
+            .id(numberFont.id)
 
             if let region = location {
                 Label(region, systemImage: "mappin.and.ellipse")
@@ -224,7 +263,7 @@ struct TeamProfileView: View {
     /// contact details, robot photos, the team's own description.
     @ViewBuilder
     private var officialLink: some View {
-        if let url = OfficialLinks.team(number) {
+        if let url = OfficialLinks.team(number, program: appConfig.config.program) {
             Link(destination: url) {
                 HStack(spacing: 10) {
                     Image(systemName: "safari").foregroundStyle(theme.accent)
@@ -502,7 +541,29 @@ final class TeamProfileModel {
     private(set) var currentEvent: TeamEvent?
     private(set) var upcomingMatches: [TeamMatch] = []
     private(set) var hasOriginMatches = false
-    private let api = VEXRankAPI()
+    /// Why a season could not be loaded, for the retry in its place.
+    private(set) var seasonError: [Int: String] = [:]
+    private var loadingSeasons: Set<Int> = []
+    private let api = VEXRankAPI.shared
+
+    /// Fetches `season`'s rows and folds them into the profile, unless they
+    /// are already there. The first load covers one season; this covers the
+    /// rest as the reader asks for them.
+    @MainActor
+    func ensure(season: Int, number: String) async {
+        guard let current = profile, !current.hasLoaded(season: season),
+              loadingSeasons.insert(season).inserted else { return }
+        defer { loadingSeasons.remove(season) }
+        seasonError[season] = nil
+        do {
+            let scoped = try await api.teamProfile(number: number, season: season)
+            // Merged into whatever is there now, not the profile this began
+            // with: another season may have landed while this one was loading.
+            profile = profile?.merging(scoped) ?? scoped
+        } catch {
+            seasonError[season] = error.localizedDescription
+        }
+    }
 
     /// Fetched separately and allowed to fail quietly: the schedule is a bonus
     /// on top of the profile, and a profile that loaded should not report an
@@ -530,15 +591,37 @@ final class TeamProfileModel {
     func load(ref: TeamRef, ranking: TeamRanking?) async {
         guard profile == nil else { return }
         let number = ref.number
-        do { profile = try await api.teamProfile(number: number) }
-        catch { self.error = error.localizedDescription }
+
+        // Only the schedule needs the profile first - it reads the team's
+        // current event out of it. The event the reader arrived from and the
+        // world ranking are answerable straight away, so they are started here
+        // rather than queued behind two round trips they do not depend on.
+        async let origin: Void = loadOrigin(ref)
+        async let ranked: RankingsResponse? = ranking == nil ? try? await api.rankings() : nil
+
+        // One season, not the whole career: uncached, the all-seasons profile
+        // took 3 to 14 seconds against about half a second for this. Other
+        // seasons are fetched when the reader picks them - see `ensure`.
+        let season = await api.currentSeason()
+        // A team opened before draws from its last copy while this one loads.
+        if let known = await api.lastKnownTeamProfile(number: number, season: season) {
+            profile = known
+        }
+        do {
+            let fresh = try await api.teamProfile(number: number, season: season)
+            // Folded in rather than assigned: a season picked while this was
+            // loading has already been merged into what is on screen.
+            profile = profile?.merging(fresh) ?? fresh
+        } catch {
+            // Keep the saved copy if there is one; it is only a little old.
+            if profile == nil { self.error = error.localizedDescription }
+        }
 
         await loadUpcoming(number: number)
-        await loadOrigin(ref)
+        await origin
 
-        guard ranking == nil else { return }
         // Best effort: a team outside the published ranking simply has none.
-        if let rankings = try? await api.rankings() {
+        if let rankings = await ranked {
             resolvedRanking = rankings.rankings.first {
                 $0.number.caseInsensitiveCompare(number) == .orderedSame
             }

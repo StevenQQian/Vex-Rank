@@ -19,6 +19,8 @@ public enum StrokePathParser {
         var path = Path()
         var length = 0.0
         var cursor = CGPoint.zero
+        // Where the current subpath began, so `Z` knows what it is closing.
+        var subpathStart = CGPoint.zero
 
         // Commands are single letters followed by comma/space separated numbers.
         var command: Character = "M"
@@ -29,6 +31,7 @@ public enum StrokePathParser {
             case "M":
                 guard numbers.count >= 2 else { break }
                 cursor = CGPoint(x: numbers[0], y: numbers[1])
+                subpathStart = cursor
                 path.move(to: cursor)
             case "L":
                 var index = 0
@@ -50,6 +53,15 @@ public enum StrokePathParser {
                     cursor = end
                     index += 6
                 }
+            case "Z":
+                // A closed outline joins its own start rather than ending
+                // there. Without this the first and last points are two
+                // separate stroke ends, and a square cap leaves a visible
+                // notch at the corner where they meet - which is what a
+                // squared-off zero is made of.
+                length += hypot(subpathStart.x - cursor.x, subpathStart.y - cursor.y)
+                path.closeSubpath()
+                cursor = subpathStart
             default:
                 break
             }

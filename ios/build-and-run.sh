@@ -48,7 +48,10 @@ cat > "$APP/Info.plist" <<PLIST
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>LSRequiresIPhoneOS</key><true/>
   <key>MinimumOSVersion</key><string>17.0</string>
-  <key>UILaunchScreen</key><dict/>
+  <!-- Every theme is dark. Left to default, the launch screen is white, so the
+       app opens with a white flash and then crossfades into a near-black
+       interface - which reads as the app being slow to start. -->
+  <key>UILaunchScreen</key><dict><key>UIColorName</key><string>LaunchBackground</string></dict>
   <key>CFBundleIconName</key><string>AppIcon</string>
   <key>UISupportedInterfaceOrientations</key>
   <array><string>UIInterfaceOrientationPortrait</string></array>

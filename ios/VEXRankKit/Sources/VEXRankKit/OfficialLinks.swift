@@ -14,11 +14,14 @@ public enum OfficialLinks {
     private static let site = "https://events.vex.com"
 
     /// This app is V5RC only, which is also what the rankings endpoint serves.
+    /// Overridable per call because it is one of the settings the Worker can
+    /// change: if the site ever renames the program, that should not be the
+    /// thing that needs an App Store release.
     public static let program = "V5RC"
 
     /// A team's page. Numbers are uppercased because the site's paths are, and
     /// percent-encoded in case a number ever carries something unexpected.
-    public static func team(_ number: String) -> URL? {
+    public static func team(_ number: String, program: String = OfficialLinks.program) -> URL? {
         let trimmed = number.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard !trimmed.isEmpty,
               let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed)

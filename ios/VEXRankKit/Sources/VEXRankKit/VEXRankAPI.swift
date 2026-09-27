@@ -26,6 +26,16 @@ public enum VEXRankError: LocalizedError, Sendable {
 public actor VEXRankAPI {
     public static let defaultBaseURL = URL(string: "https://vexrank-api-test.vexrank-eason.workers.dev")!
 
+    /// The instance the screens use.
+    ///
+    /// It has to be one instance, for two reasons. The response cache below
+    /// only coalesces requests it can see, and screens that each built their
+    /// own client shared nothing - opening a team from an event refetched the
+    /// event the previous screen already had. And the remote config has to
+    /// reach every caller, which it cannot do if each one holds a private copy
+    /// of the season it was built with.
+    public static let shared = VEXRankAPI()
+
     private let baseURL: URL
     private let session: URLSession
     private let decoder = JSONDecoder()
@@ -40,6 +50,15 @@ public actor VEXRankAPI {
             configuration.waitsForConnectivity = true
             configuration.timeoutIntervalForRequest = 30
             configuration.timeoutIntervalForResource = 90
+            // Big enough to hold the team directory, which is the whole point.
+            // The shared cache refuses any single response over a fraction of
+            // its capacity, so at the default size the one response that most
+            // needs storing - 11 MB of JSON that changes once a day - was the
+            // one response that never got stored, and every launch downloaded
+            // it again. With room for it, the second launch revalidates with
+            // the ETag and is answered "unchanged" instead.
+            configuration.urlCache = URLCache(memoryCapacity: 32 * 1024 * 1024,
+                                              diskCapacity: 512 * 1024 * 1024)
             self.session = URLSession(configuration: configuration)
         }
     }
@@ -54,22 +73,84 @@ public actor VEXRankAPI {
     private var cached: [String: (stored: Date, value: Any)] = [:]
     private var inFlight: [String: Task<Any, Error>] = [:]
 
+    /// Season and cache lifetimes come from here rather than from constants,
+    /// so a season rollover is a config push instead of an App Store release.
+    private var config: AppConfig = .bundled
+
+    public func apply(_ config: AppConfig) { self.config = config }
+
+    /// The season the app treats as current, from the remote config.
+    public func currentSeason() -> Int { config.currentSeason }
+
+    /// The settings document. Deliberately not retried hard and not cached in
+    /// the response cache: the store keeps its own copy on disk, and a config
+    /// the app could not fetch is one it already has an answer for.
+    public func appConfig() async throws -> AppConfig {
+        try await get("/api/app-config", attempts: 2, fresh: true)
+    }
+
     /// How long a response stays good. Short for anything that changes during
     /// a competition, long for the directory, which is rebuilt daily.
     private func lifetime(of path: String) -> TimeInterval {
-        if path.hasPrefix("/api/team-directory") { return 3600 }
-        if path.hasPrefix("/api/events/") { return 30 }
-        return 120
+        if path.hasPrefix("/api/team-directory") { return config.directoryCacheSeconds }
+        if path.hasPrefix("/api/events/") { return config.eventCacheSeconds }
+        return config.defaultCacheSeconds
+    }
+
+    /// Which responses are worth keeping between launches: the ones that
+    /// change slowly and that a screen would otherwise open on a spinner for -
+    /// the world ranking the app opens on, the season's events list, and each
+    /// team profile the reader has opened. Every one is drawn first and then
+    /// replaced by the fresh copy. An event's standings are deliberately not
+    /// kept: during a live final, yesterday's copy is exactly the wrong answer.
+    static func snapshotName(for path: String) -> String? {
+        if path == liveRankingsPath { return "rankings" }
+        guard let components = URLComponents(string: path) else { return nil }
+        let season = components.queryItems?.first { $0.name == "season" }?.value
+        if components.path == "/api/events", let season {
+            return "events-" + safe(season)
+        }
+        if components.path.hasPrefix("/api/teams/"), let season {
+            let number = String(components.path.dropFirst("/api/teams/".count))
+            return "team-" + safe(number.uppercased()) + "-" + safe(season)
+        }
+        return nil
+    }
+
+    /// A file name out of API input: letters and digits only.
+    private static func safe(_ text: String) -> String {
+        String(text.unicodeScalars.filter { CharacterSet.alphanumerics.contains($0) }.map(Character.init))
+    }
+
+    private static let liveRankingsPath = "/api/rankings?data=v49"
+
+    /// The world ranking as it was when the app last saw it, for drawing the
+    /// first screen while the current one is on its way. `nil` on a first run.
+    public func lastKnownRankings() -> RankingsResponse? {
+        Snapshots.load(RankingsResponse.self, named: "rankings", decoder: decoder)
+    }
+
+    /// The season's events as last seen, for the same reason.
+    public func lastKnownEvents(season: Int? = nil) -> EventsResponse? {
+        Snapshots.load(EventsResponse.self, named: "events-\(season ?? config.currentSeason)", decoder: decoder)
+    }
+
+    /// A profile as it was when the reader last opened it, so reopening a team
+    /// draws at once instead of waiting on the network a second time.
+    public func lastKnownTeamProfile(number: String, season: Int) -> TeamProfileResponse? {
+        let encoded = number.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? number
+        guard let name = Self.snapshotName(for: "/api/teams/\(encoded)?profile=v8&season=\(season)") else { return nil }
+        return Snapshots.load(TeamProfileResponse.self, named: name, decoder: decoder)
     }
 
     public func rankings(season: Int? = nil) async throws -> RankingsResponse {
-        var path = "/api/rankings?data=v49"
+        var path = Self.liveRankingsPath
         if let season { path += "&season=\(season)" }
         return try await get(path)
     }
 
-    public func events(season: Int = 204) async throws -> EventsResponse {
-        try await get("/api/events?season=\(season)&classification=v49")
+    public func events(season: Int? = nil) async throws -> EventsResponse {
+        try await get("/api/events?season=\(season ?? config.currentSeason)&classification=v49")
     }
 
     /// The whole directory in one response - about 11 MB and 56,000 teams, so
@@ -79,8 +160,8 @@ public actor VEXRankAPI {
         try await get("/api/team-directory", attempts: 1)
     }
 
-    public func skills(season: Int = 204) async throws -> SkillsResponse {
-        try await get("/api/skills?season=\(season)")
+    public func skills(season: Int? = nil) async throws -> SkillsResponse {
+        try await get("/api/skills?season=\(season ?? config.currentSeason)")
     }
 
     public func eventDetail(id: String, fresh: Bool = false) async throws -> EventDetailResponse {
@@ -114,7 +195,15 @@ public actor VEXRankAPI {
         }
 
         var request = URLRequest(url: url)
-        if fresh { request.cachePolicy = .reloadIgnoringLocalCacheData }
+        if fresh {
+            request.cachePolicy = .reloadIgnoringLocalCacheData
+            // Tells the Worker not to answer from its own expired copy. Ordinary
+            // browsing is served that copy immediately while it refreshes behind
+            // the reader, which is what makes a screen open at once; someone who
+            // pulled to refresh at a live event is asking a different question
+            // and is willing to wait for the real answer.
+            request.setValue("1", forHTTPHeaderField: "X-VEXRank-Refresh")
+        }
 
         // A second caller for the same thing waits on the first rather than
         // starting its own.
@@ -148,7 +237,11 @@ public actor VEXRankAPI {
 
                 if (200..<300).contains(status) {
                     do {
-                        return try decoder.decode(T.self, from: data)
+                        let value = try decoder.decode(T.self, from: data)
+                        // Only once it has decoded: a body that this build
+                        // cannot read is not worth keeping for the next launch.
+                        if let name = Self.snapshotName(for: path) { Snapshots.save(data, as: name) }
+                        return value
                     } catch {
                         // Decoding failures are deterministic: retrying cannot help.
                         throw VEXRankError.decoding(String(describing: error))

@@ -123,11 +123,18 @@ public struct MatchTeamSlot: Codable, Sendable, Hashable {
     public let sitting: Bool?
 }
 
+extension DivisionMatch {
+    /// Whether this match counts toward the qualification standings.
+    public var isQualification: Bool {
+        round == 2 || (name?.localizedCaseInsensitiveContains("qual") ?? false)
+    }
+}
+
 extension Division {
     /// Qualification matches in play order.
     public var qualification: [DivisionMatch] {
         (matches ?? [])
-            .filter { $0.round == 2 || ($0.name?.localizedCaseInsensitiveContains("qual") ?? false) }
+            .filter(\.isQualification)
             .sorted { ($0.matchnum ?? 0) < ($1.matchnum ?? 0) }
     }
 

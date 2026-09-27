@@ -180,11 +180,18 @@ final class RankingsModel {
     private(set) var state: State = .loading
     /// How much official data is behind the table, for the summary strip.
     private(set) var meta: (eventsProcessed: Int, matchesProcessed: Int)?
-    private let api = VEXRankAPI()
+    private let api = VEXRankAPI.shared
 
     @MainActor
     func load() async {
-        state = .loading
+        // Draw the table the app had last time while the current one is
+        // fetched. A cold launch otherwise spends its first second on a spinner
+        // in front of a ranking that has barely moved since the reader last
+        // looked, which is the slowest the app ever feels.
+        if case .loading = state, let known = await api.lastKnownRankings() {
+            meta = (known.eventsProcessed, known.matchesProcessed)
+            state = .loaded(known.sortedForDisplay)
+        }
         do {
             let response = try await api.rankings()
             meta = (response.eventsProcessed, response.matchesProcessed)
@@ -192,6 +199,9 @@ final class RankingsModel {
             // rating - confidence while returning rating.
             state = .loaded(response.sortedForDisplay)
         } catch {
+            // Keep whatever is on screen: a snapshot that is a few hours old
+            // beats replacing a working table with an error.
+            if case .loaded = state { return }
             state = .failed(error.localizedDescription)
         }
     }

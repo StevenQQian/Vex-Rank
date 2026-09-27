@@ -74,6 +74,39 @@ struct TeamEventMatchesView: View {
                 .listRowBackground(theme.surface)
             }
 
+            if let profile = model.strength {
+                Section {
+                    VStack(alignment: .leading, spacing: 12) {
+                        StrengthHexagon(axes: profile.axes, accent: theme.accent)
+                            .frame(height: 270)
+                        ForEach(profile.axes) { axis in
+                            HStack(alignment: .firstTextBaseline) {
+                                Text(axis.label).font(.subheadline).foregroundStyle(.secondary)
+                                if axis.lowerIsBetter {
+                                    Text("lower is better").font(.caption2).foregroundStyle(.tertiary)
+                                }
+                                Spacer(minLength: 8)
+                                Text(axis.display)
+                                    .font(.system(.subheadline, design: .monospaced, weight: .semibold))
+                                    .monospacedDigit()
+                                Text(axis.place.map { "\(ordinal($0)) of \(axis.of)" } ?? "no data yet")
+                                    .font(.caption).foregroundStyle(.tertiary)
+                                    .frame(minWidth: 62, alignment: .trailing)
+                            }
+                        }
+                    }
+                    .padding(.vertical, 4)
+                } header: {
+                    Text("Strengths")
+                } footer: {
+                    // What the shape means, since a radar chart on its own
+                    // invites reading raw values off it.
+                    Text("Each axis ranks \(ref.team) against the \(profile.teams) teams in \(profile.division.isEmpty ? "its division" : profile.division): the edge is the best there, the dashed ring the middle. AWP is autonomous win points per qualification match, worked out from win points.\(profile.isProvisional ? " Ratings are provisional until each team has played about four matches." : "")")
+                        .font(.caption2)
+                }
+                .listRowBackground(theme.surface)
+            }
+
             if !model.momentum.isEmpty {
                 Section("Tournament momentum") {
                     VStack(alignment: .leading, spacing: 8) {
@@ -249,8 +282,9 @@ final class TeamEventMatchesModel {
     private(set) var standing: EventStanding?
     private(set) var momentum: [MomentumPoint] = []
     private(set) var check: RecordCheck?
+    private(set) var strength: StrengthProfile?
     private(set) var error: String?
-    private let api = VEXRankAPI()
+    private let api = VEXRankAPI.shared
 
     @MainActor
     func load(_ ref: TeamEventRef, force: Bool = false) async {
@@ -265,6 +299,7 @@ final class TeamEventMatchesModel {
             standing = detail.standing(for: ref.team)
             momentum = TeamMomentum.points(from: all)
             check = standing.map { RecordCheck(standing: $0, matches: all) }
+            strength = detail.strengthProfile(for: ref.team)
             // The standings are the authority for the record itself.
             if let standing {
                 record = TeamEventRecord(wins: standing.wins, losses: standing.losses,

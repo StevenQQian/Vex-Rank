@@ -21,9 +21,9 @@ public struct SignedNumberView: View {
     private let accentFrom: Int?
     private let accent: Color
     private let ink: Color
+    private let font: StrokeFont
 
-    /// Stroke width in glyph units. The glyph box is 100 units tall.
-    private static let penWidth: CGFloat = 7
+    private var penWidth: CGFloat { CGFloat(font.hand.penWidth) }
 
     /// Ordered strokes across the whole string, already positioned at their
     /// character's offset, each tagged with the index of that character.
@@ -40,26 +40,33 @@ public struct SignedNumberView: View {
     /// right edge of the screen.
     private let bounds: CGRect
 
-    public init(text: String, accentFrom: Int? = nil, ink: Color = .primary, accent: Color = .red) {
+    public init(text: String, font: StrokeFont = .marker, accentFrom: Int? = nil,
+                ink: Color = .primary, accent: Color = .red) {
         self.text = text
+        self.font = font
         self.accentFrom = accentFrom
         self.ink = ink
         self.accent = accent
 
+        let lean = font.lean
+
         var collected: [(character: Int, path: Path, length: Double)] = []
         for (index, character) in Array(text).enumerated() {
-            let offset = CGAffineTransform(translationX: CGFloat(Double(index) * StrokeGlyphs.advance), y: 0)
-            for stroke in StrokeGlyphs.strokes(for: character) ?? [] {
+            let offset = CGAffineTransform(translationX: CGFloat(Double(index) * font.advance), y: 0)
+            for stroke in font.strokes(for: character) ?? [] {
                 let parsed = StrokePathParser.parse(stroke)
-                collected.append((index, parsed.path.applying(offset), parsed.approximateLength))
+                // Length is measured before the shear: it drives the pen's
+                // timing, and a slant should change the look, not the pace.
+                collected.append((index, parsed.path.applying(lean.concatenating(offset)),
+                                  parsed.approximateLength))
             }
         }
         self.strokes = collected
 
         let inked = collected.reduce(CGRect.null) { $0.union($1.path.boundingRect) }
         self.bounds = inked.isNull
-            ? CGRect(x: 0, y: 0, width: 1, height: StrokeGlyphs.height)
-            : inked.insetBy(dx: -Self.penWidth / 2, dy: -Self.penWidth / 2)
+            ? CGRect(x: 0, y: 0, width: 1, height: font.height)
+            : inked.insetBy(dx: -CGFloat(font.hand.penWidth) / 2, dy: -CGFloat(font.hand.penWidth) / 2)
     }
 
     @State private var progress: [Double] = []
@@ -68,7 +75,7 @@ public struct SignedNumberView: View {
     private var characterCount: Int { Array(text).count }
 
     public var body: some View {
-        if !StrokeGlyphs.canDraw(text) {
+        if !font.canDraw(text) {
             // Falls back to text rather than rendering a gap.
             Text(text).font(.system(size: 44, weight: .semibold, design: .rounded))
         } else {
@@ -89,7 +96,9 @@ public struct SignedNumberView: View {
                         )
                         .stroke(
                             (accentFrom.map { strokes[index].character >= $0 } ?? false) ? accent : ink,
-                            style: StrokeStyle(lineWidth: Self.penWidth * unit, lineCap: .round, lineJoin: .round)
+                            style: StrokeStyle(lineWidth: penWidth * unit,
+                                               lineCap: font.hand.roundCap ? .round : .square,
+                                               lineJoin: font.hand.roundCap ? .round : .miter)
                         )
                     }
                 }
@@ -107,13 +116,15 @@ public struct SignedNumberView: View {
         }
         progress = Array(repeating: 0, count: strokes.count)
 
-        // Matches the web timing: 0.92ms per glyph unit at the start, with the
-        // pen easing off through the final character. The curve is keyed to the
-        // character, not the stroke, because a hand slows through the whole of
-        // the last character rather than only its last stroke.
-        let penSpeed = 0.00092
-        let penLift = 0.056
-        let finalDrag = 1.35
+        // The pen's character comes from the font: the marker eases off through
+        // the final character the way a real hand does, while the drafting pen
+        // holds an even pace and pauses longer between strokes. The drag curve
+        // is keyed to the character, not the stroke, because a hand slows
+        // through the whole of the last character rather than only its last
+        // stroke.
+        let penSpeed = font.hand.secondsPerUnit
+        let penLift = font.hand.lift
+        let finalDrag = font.hand.finalDrag
         let lastCharacter = Double(max(1, characterCount - 1))
 
         var delay = 0.18

@@ -14,7 +14,10 @@ struct EventDetailView: View {
     let event: EventRef
     @Environment(\.vexTheme) private var theme
     @State private var model = EventDetailModel()
-    @State private var tab: EventSection?
+    /// `-section Bracket` opens straight to a section, since the chips cannot
+    /// be tapped without a touch. A State initial value, not a later
+    /// assignment, for the same reason the query and sort are.
+    @State private var tab: EventSection? = EventDetailView.launchSection
     @State private var divisionID: Int?
     /// Lists the reader has asked to see in full. Without a cap, a 41-team
     /// division pushes everything below it three screens down.
@@ -29,6 +32,13 @@ struct EventDetailView: View {
     /// `-sort DPR` picks the order, since the menu cannot be opened without a
     /// touch. A State initial value, not a later assignment.
     @State private var sort: StandingSort = EventDetailView.launchSort
+
+    private static var launchSection: EventSection? {
+        guard let index = CommandLine.arguments.firstIndex(of: "-section"),
+              CommandLine.arguments.indices.contains(index + 1)
+        else { return nil }
+        return EventSection(rawValue: CommandLine.arguments[index + 1])
+    }
 
     private static var launchSort: StandingSort {
         guard let index = CommandLine.arguments.firstIndex(of: "-sort"),
@@ -232,7 +242,10 @@ struct EventDetailView: View {
         case .bracket:
             if let division {
                 Section("Elimination bracket") {
-                    BracketView(division: division)
+                    // The division is named on the match screen only when the
+                    // event has more than one to tell apart.
+                    BracketView(division: division,
+                                divisionLabel: detail.divisions.count > 1 ? division.name : nil)
                         .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
                 }
                 .listRowBackground(theme.surface)
@@ -490,7 +503,7 @@ final class EventDetailModel {
     private(set) var detail: EventDetailResponse?
     private(set) var error: String?
     private(set) var updated: Date?
-    private let api = VEXRankAPI()
+    private let api = VEXRankAPI.shared
 
     /// Whether this event still has matches to play, which is what decides if
     /// it is worth polling.

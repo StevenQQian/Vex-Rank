@@ -162,7 +162,7 @@ final class StatLeadersModel {
     private(set) var state: State = .loading
     private var teams: [TeamRanking] = []
     private var skills: [SkillsEntry] = []
-    private let api = VEXRankAPI()
+    private let api = VEXRankAPI.shared
 
     @MainActor
     func load() async {

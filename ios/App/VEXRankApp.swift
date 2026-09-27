@@ -5,6 +5,7 @@ import VEXRankKit
 @main
 struct VEXRankApp: App {
     @AppStorage("vexrank-theme") private var themeID: String = VEXTheme.midnight.id
+    @AppStorage("vexrank-number-font") private var numberFontID: String = StrokeFont.marker.id
     @State private var path = NavigationPath()
     @State private var eventPath = NavigationPath()
     @State private var statPath = NavigationPath()
@@ -14,6 +15,8 @@ struct VEXRankApp: App {
     /// an assignment made as the view settles can be lost.
     @State private var tab = VEXRankApp.launchTab
     @State private var favourites = FavouriteTeams()
+    @State private var config = AppConfigStore()
+    @Environment(\.scenePhase) private var scenePhase
 
     /// `-team 31260X` opens straight to a profile. Used for verifying the
     /// profile without tapping, and the hook a URL scheme will reuse.
@@ -44,8 +47,10 @@ struct VEXRankApp: App {
                         .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
                         .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
-                        .toolbar { themeMenu }
+                        .navigationDestination(for: MatchRef.self) { MatchDetailView(ref: $0) }
+                        .toolbar { teamBadge; themeMenu }
                 }
+                .serviceBanner(config)
                 .tabItem { Label("Rankings", systemImage: "trophy") }
                 .tag(0)
 
@@ -57,10 +62,12 @@ struct VEXRankApp: App {
                         .navigationTitle("Events")
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
                         .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
+                        .navigationDestination(for: MatchRef.self) { MatchDetailView(ref: $0) }
                         // Reached by tapping a team in a standings or match row.
                         .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
-                        .toolbar { themeMenu }
+                        .toolbar { teamBadge; themeMenu }
                 }
+                .serviceBanner(config)
                 .tabItem { Label("Events", systemImage: "calendar") }
                 .tag(1)
 
@@ -70,8 +77,10 @@ struct VEXRankApp: App {
                         .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
                         .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
-                        .toolbar { themeMenu }
+                        .navigationDestination(for: MatchRef.self) { MatchDetailView(ref: $0) }
+                        .toolbar { teamBadge; themeMenu }
                 }
+                .serviceBanner(config)
                 .tabItem { Label("Stats", systemImage: "chart.bar") }
                 .tag(2)
 
@@ -81,10 +90,35 @@ struct VEXRankApp: App {
                         .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
                         .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
-                        .toolbar { themeMenu }
+                        .navigationDestination(for: MatchRef.self) { MatchDetailView(ref: $0) }
+                        .toolbar { teamBadge; themeMenu }
                 }
+                .serviceBanner(config)
                 .tabItem { Label("Teams", systemImage: "person.3") }
                 .tag(3)
+            }
+            .task {
+                // The stored config is already in hand from `init`, so this is
+                // a refresh behind a working app, not a gate in front of one.
+                await config.refresh(using: .shared)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                // A reader who leaves the app open for a weekend of matches
+                // would otherwise never pick up a change.
+                guard phase == .active else { return }
+                Task { await config.refresh(using: .shared) }
+            }
+            .task(id: Self.launchArgument("-openmatch")) {
+                // `-openmatch <eventID>` pushes the first bracket match of that
+                // event, since a bracket card cannot be tapped without a touch.
+                // The same reason the query and the sort have launch hooks.
+                guard let id = Self.launchArgument("-openmatch"),
+                      let detail = try? await VEXRankAPI.shared.eventDetail(id: id),
+                      let division = detail.divisions.first(where: { !$0.bracket.isEmpty }),
+                      let round = division.bracket.first,
+                      let slot = round.slots.compactMap({ $0 }).first else { return }
+                eventPath.append(slot.reference(round: round.label,
+                                                division: detail.divisions.count > 1 ? division.name : nil))
             }
             .onAppear {
                 guard let team = Self.launchTeam else { return }
@@ -97,9 +131,25 @@ struct VEXRankApp: App {
                 path.append(TeamRef(team, fromEvent: from))
             }
             .environment(\.favouriteTeams, favourites)
+            .environment(\.appConfig, config)
             .environment(\.vexTheme, VEXTheme.named(themeID))
+            .environment(\.numberFont, StrokeFont.named(numberFontID))
             .preferredColorScheme(.dark)
             .tint(VEXTheme.named(themeID).accent)
+        }
+    }
+
+    /// The team behind the app. A link like any team row, so it pushes the
+    /// profile onto whichever tab it was tapped from.
+    private var teamBadge: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) {
+            NavigationLink(value: TeamRef("55288A")) {
+                Image("TeamLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 34, height: 34)
+            }
+            .accessibilityLabel("Built by team 55288A, Makapaka")
         }
     }
 
@@ -108,6 +158,15 @@ struct VEXRankApp: App {
             Menu {
                 Picker("Colour theme", selection: $themeID) {
                     ForEach(VEXTheme.all) { Text($0.name).tag($0.id) }
+                }
+                // Sectioned rather than nested: both are one-tap choices, and
+                // burying the second one behind a submenu hides that it exists.
+                Section("Team number") {
+                    Picker("Number font", selection: $numberFontID) {
+                        ForEach(StrokeFont.all) { font in
+                            Text("\(font.name) - \(font.detail)").tag(font.id)
+                        }
+                    }
                 }
             } label: {
                 Image(systemName: "circle.lefthalf.filled")
