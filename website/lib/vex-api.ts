@@ -23,7 +23,20 @@ export async function vexJson(url: string, headers: Record<string, string>): Pro
   let lastStatus = 0;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const response = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+      // `manual` because official data answers an unauthenticated or expired
+      // request with a 302 to its login page, not a 401. Followed, that lands
+      // on an HTML page, which then fails to parse as JSON and is retried three
+      // times - so a token that needs renewing looks exactly like an outage and
+      // costs twenty seconds to not find out.
+      const response = await fetch(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+      if (response.status >= 300 && response.status < 400) {
+        await response.body?.cancel();
+        throw new Error('Event.VEX rejected the credentials (redirected to sign-in). The API token needs renewing.');
+      }
+      if (response.status === 401 || response.status === 403) {
+        await response.body?.cancel();
+        throw new Error(`Event.VEX rejected the credentials (${response.status}). The API token needs renewing.`);
+      }
       if (response.ok) {
         const data=await response.json();
         if(pages.size>=600)pages.delete(pages.keys().next().value!);
@@ -38,7 +51,8 @@ export async function vexJson(url: string, headers: Record<string, string>): Pro
         await new Promise(resolve=>setTimeout(resolve,Math.min(10000,Math.max(2000,Number.isFinite(seconds)?seconds*1000:2000))));
       }
     } catch (error) {
-      if (attempt === 2 || (error instanceof Error && error.message.startsWith('Event.VEX request failed'))) throw error;
+      // Terminal: neither a wrong request nor a bad token improves on a retry.
+      if (attempt === 2 || (error instanceof Error && (error.message.startsWith('Event.VEX request failed') || error.message.includes('credentials')))) throw error;
     }
     if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 400 * 2 ** attempt));
   }
