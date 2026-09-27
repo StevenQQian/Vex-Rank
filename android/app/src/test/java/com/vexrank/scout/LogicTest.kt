@@ -301,6 +301,25 @@ class TeamMatchTest {
         assertEquals(1, check.unexplainedWins)
     }
 
+    @Test fun `eliminations do not count against the standings`() {
+        // 19600Z went 7-1-0 in qualification and then played eliminations.
+        val detail = fixture<EventDetailResponse>("event-detail")
+        val matches = detail.matches("19600Z")
+        assertTrue(matches.any { !it.isQualification && it.isPlayed })
+        val check = RecordCheck.of(detail.standing("19600Z")!!, matches)
+        assertTrue(check.agrees)
+        assertEquals(0, check.unexplainedWins)
+        assertEquals("7–1–0", check.officialSummary)
+    }
+
+    @Test fun `a genuine mismatch survives ignoring eliminations`() {
+        // 978Z is credited 2-6 but went 1-7 on score in qualification.
+        val detail = fixture<EventDetailResponse>("event-detail")
+        val check = RecordCheck.of(detail.standing("978Z")!!, detail.matches("978Z"))
+        assertFalse(check.agrees)
+        assertEquals(1, check.unexplainedWins)
+    }
+
     @Test fun `a finished event agrees with itself`() {
         val detail = fixture<EventDetailResponse>("event-detail")
         val team = detail.divisions.first().rankings.first().team.name

@@ -83,6 +83,7 @@ data class EventDetailResponse(
                         scoreFor = if (played) (if (onRed) match.red?.score else match.blue?.score) else null,
                         scoreAgainst = if (played) (if (onRed) match.blue?.score else match.red?.score) else null,
                         isPlayed = played,
+                        isQualification = match.isQualification,
                     )
                 )
             }
@@ -159,7 +160,7 @@ data class Division(
 ) {
     val qualification: List<DivisionMatch>
         get() = matches.orEmpty()
-            .filter { it.round == 2 || it.name?.contains("qual", true) == true }
+            .filter { it.isQualification }
             .sortedBy { it.matchnum ?: 0 }
 
     /// Elimination matches, earliest round first. Round 6 is the round of 16
@@ -220,6 +221,10 @@ data class DivisionMatch(
     /// Deliberately not the API's `scored` flag: that is false on completed
     /// matches in the captured payloads, so trusting it would print "Not
     /// played" beside a real 153-123 result.
+    /// Whether this match counts toward the qualification standings.
+    val isQualification: Boolean
+        get() = round == 2 || name?.contains("qual", true) == true
+
     val isPlayed: Boolean
         get() = alliances.orEmpty().any { (it.score ?: -1) >= 0 } &&
             alliances.orEmpty().any { (it.score ?: 0) > 0 }
@@ -286,6 +291,8 @@ data class TeamMatch(
     val scoreFor: Int?,
     val scoreAgainst: Int?,
     val isPlayed: Boolean,
+    /// A qualification match, the only kind the event's standings count.
+    val isQualification: Boolean,
 ) {
     enum class Outcome { WON, LOST, TIED, SCHEDULED }
 
@@ -341,13 +348,18 @@ data class RecordCheck(
     val officialSummary: String get() = "$officialWins–$officialLosses–$officialTies"
 
     companion object {
-        fun of(standing: EventStanding, matches: List<TeamMatch>) = RecordCheck(
-            officialWins = standing.wins,
-            officialLosses = standing.losses,
-            officialTies = standing.ties,
-            scoredWins = matches.count { it.outcome == TeamMatch.Outcome.WON },
-            scoredLosses = matches.count { it.outcome == TeamMatch.Outcome.LOST },
-            scoredTies = matches.count { it.outcome == TeamMatch.Outcome.TIED },
-        )
+        fun of(standing: EventStanding, matches: List<TeamMatch>): RecordCheck {
+            // The standings are qualification only; eliminations would make
+            // every team that reached them look as if the two disagree.
+            val counted = matches.filter { it.isQualification }
+            return RecordCheck(
+                officialWins = standing.wins,
+                officialLosses = standing.losses,
+                officialTies = standing.ties,
+                scoredWins = counted.count { it.outcome == TeamMatch.Outcome.WON },
+                scoredLosses = counted.count { it.outcome == TeamMatch.Outcome.LOST },
+                scoredTies = counted.count { it.outcome == TeamMatch.Outcome.TIED },
+            )
+        }
     }
 }
