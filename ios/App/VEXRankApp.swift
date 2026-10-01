@@ -15,6 +15,8 @@ struct VEXRankApp: App {
     /// an assignment made as the view settles can be lost.
     @State private var tab = VEXRankApp.launchTab
     @State private var favourites = FavouriteTeams()
+    /// `-about` opens the About sheet on launch, for checking it without a tap.
+    @State private var showAbout = CommandLine.arguments.contains("-about")
     @State private var config = AppConfigStore()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -130,6 +132,7 @@ struct VEXRankApp: App {
                 }
                 path.append(TeamRef(team, fromEvent: from))
             }
+            .sheet(isPresented: $showAbout) { AboutView() }
             .environment(\.favouriteTeams, favourites)
             .environment(\.appConfig, config)
             .environment(\.vexTheme, VEXTheme.named(themeID))
@@ -166,6 +169,11 @@ struct VEXRankApp: App {
                         ForEach(StrokeFont.all) { font in
                             Text("\(font.name) - \(font.detail)").tag(font.id)
                         }
+                    }
+                }
+                Section {
+                    Button { showAbout = true } label: {
+                        Label("About Scouting Cat", systemImage: "info.circle")
                     }
                 }
             } label: {

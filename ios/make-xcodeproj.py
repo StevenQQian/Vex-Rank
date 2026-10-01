@@ -12,7 +12,7 @@ import os, re, uuid, pathlib
 ROOT = pathlib.Path(__file__).parent
 PROJECT = ROOT / "MakapakaScout.xcodeproj"
 BUNDLE_ID = "com.vexrank.app"
-TEAM = "F6CMB42387"
+TEAM = "JJRCKVACCR"
 
 def oid(seed):
     return uuid.uuid5(uuid.NAMESPACE_URL, seed).hex[:24].upper()
@@ -53,7 +53,7 @@ group_children.append(f'\t\t\t\t{oid("file:package")} /* VEXRankKit */,')
 SETTINGS_TARGET = f'''
 \t\t\t\tASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 \t\t\t\tCODE_SIGN_STYLE = Automatic;
-\t\t\t\tCURRENT_PROJECT_VERSION = 1;
+\t\t\t\tCURRENT_PROJECT_VERSION = 4;
 \t\t\t\tDEVELOPMENT_TEAM = {TEAM};
 \t\t\t\tGENERATE_INFOPLIST_FILE = YES;
 \t\t\t\tINFOPLIST_KEY_CFBundleDisplayName = "Makapaka Scout";
