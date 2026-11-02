@@ -9,7 +9,7 @@
 //   POST /api/streams  {event, videoId, sync:{matchId, seconds}}
 import { youtubeId } from '../lib/stream-jumper.mjs';
 
-type Stream = { videoId: string; url?: string; divisionId?: number | null; sync?: { matchId: number; seconds: number } | null; startTime?: string | null; checkedAt?: number; addedAt?: string };
+type Stream = { videoId: string; url?: string; divisionId?: number | null; sync?: { matchId: number; seconds: number } | null; startTime?: string | null; checkedAt?: number; notLive?: boolean; addedAt?: string };
 interface StreamEnv { DB: D1Database; YOUTUBE_API_KEY?: string }
 
 const MAX_STREAMS = 8;
@@ -26,19 +26,41 @@ async function save(env: StreamEnv, event: number, streams: Stream[]) {
     .bind(key(event), JSON.stringify({ streams }), Date.now() + KEEP_FOR).run();
 }
 
-// When the broadcast went live, from YouTube - only with an API key. A start
-// time never changes once found; a video without one (not live yet, or an
-// upload) is asked about again at most every RECHECK, so a busy event page
-// costs one quota unit per video per few minutes, not one per view.
+// When the broadcast went live, from YouTube - only with an API key. The
+// free allowance is 10,000 units a day and each lookup costs one, so:
+//   - a start time, once found, is kept for good;
+//   - a video that is not a live broadcast (an upload, private, deleted) is
+//     marked and never asked about again;
+//   - a broadcast that has not started is asked about at most every RECHECK;
+//   - at most LOOKUPS_PER_REQUEST new videos per request, and a daily ceiling
+//     (DAILY_LOOKUPS, half the allowance) that even deliberate abuse cannot
+//     pass. Past it, streams fall back to the manual sync until tomorrow.
 const RECHECK = 5 * 60000;
-async function startTimes(env: StreamEnv, ids: string[]): Promise<Record<string, string> | null> {
-  if (!env.YOUTUBE_API_KEY || !ids.length) return null;
+const LOOKUPS_PER_REQUEST = 4;
+const DAILY_LOOKUPS = 5000;
+type Lookup = { startTime?: string; live: boolean };
+
+async function spendLookup(env: StreamEnv): Promise<boolean> {
+  // YouTube's quota day runs on Pacific time; UTC dates are close enough for a ceiling at half.
+  const key = `youtube-lookups:${new Date().toISOString().slice(0, 10)}`;
+  const row = await env.DB.prepare('SELECT body FROM api_cache WHERE key=?').bind(key).first<{ body: string }>().catch(() => null);
+  const used = Number(row?.body ?? 0);
+  if (used >= DAILY_LOOKUPS) return false;
+  await env.DB.prepare('INSERT INTO api_cache(key,body,expires_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET body=excluded.body,expires_at=excluded.expires_at')
+    .bind(key, String(used + 1), Date.now() + 2 * 86400000).run().catch(() => {});
+  return true;
+}
+
+async function lookUp(env: StreamEnv, ids: string[]): Promise<Record<string, Lookup> | null> {
+  if (!env.YOUTUBE_API_KEY || !ids.length || !(await spendLookup(env))) return null;
   try {
-    const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${ids.slice(0, 20).join(',')}&key=${env.YOUTUBE_API_KEY}`;
+    const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${ids.join(',')}&key=${env.YOUTUBE_API_KEY}`;
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) { console.error('YouTube lookup failed', response.status); return null; }
     const body = await response.json() as { items?: { id: string; liveStreamingDetails?: { actualStartTime?: string } }[] };
-    return Object.fromEntries((body.items ?? []).filter(item => item.liveStreamingDetails?.actualStartTime).map(item => [item.id, item.liveStreamingDetails!.actualStartTime!]));
+    const found: Record<string, Lookup> = Object.fromEntries(ids.map(id => [id, { live: false }]));
+    for (const item of body.items ?? []) found[item.id] = { live: Boolean(item.liveStreamingDetails), startTime: item.liveStreamingDetails?.actualStartTime };
+    return found;
   } catch { return null; }
 }
 
@@ -52,17 +74,18 @@ export async function streamsRoute(request: Request, env: StreamEnv): Promise<Re
     const listed = (url.searchParams.get('videos') ?? '').split(',').filter(id => /^[A-Za-z0-9_-]{11}$/.test(id));
     const known = new Map(streams.map(stream => [stream.videoId, stream]));
     const now = Date.now();
-    const due = [...new Set([...known.keys(), ...listed])].filter(id => !known.get(id)?.startTime && now - (known.get(id)?.checkedAt ?? 0) > RECHECK);
-    const found = await startTimes(env, due);
+    const due = [...new Set([...known.keys(), ...listed])]
+      .filter(id => { const stream = known.get(id); return !stream?.startTime && !stream?.notLive && now - (stream?.checkedAt ?? 0) > RECHECK; })
+      .filter(id => known.has(id) || known.size < MAX_STREAMS * 2)
+      .slice(0, LOOKUPS_PER_REQUEST);
+    const found = await lookUp(env, due);
     if (found) {
       for (const videoId of due) {
         let stream = known.get(videoId);
-        if (!stream) {
-          if (streams.length >= MAX_STREAMS * 2) continue;
-          stream = { videoId, listed: true } as Stream; streams.push(stream); known.set(videoId, stream);
-        }
+        if (!stream) { stream = { videoId, listed: true } as Stream; streams.push(stream); known.set(videoId, stream); }
         stream.checkedAt = now;
-        if (found[videoId]) stream.startTime = found[videoId];
+        if (found[videoId].startTime) stream.startTime = found[videoId].startTime;
+        if (!found[videoId].live) stream.notLive = true;
       }
       await save(env, event, streams).catch(() => {});
     }
