@@ -54,4 +54,10 @@ final class StreamJumperTests: XCTestCase {
         XCTAssertEqual(StreamJumper.videoTime(3725), "1:02:05")
         XCTAssertEqual(StreamJumper.videoTime(65), "1:05")
     }
+
+    func testYouTubeStartTimeWinsOverASync() throws {
+        let m = try matches()
+        let streams = [EventStream(videoId: "v1", sync: .init(matchId: 2, seconds: 0), startTime: "2026-10-31T09:35:00-04:00")]
+        XCTAssertEqual(StreamJumper.jump(to: m[2]!, divisionId: nil, streams: streams, matches: m), MatchJump(videoId: "v1", seconds: 213))
+    }
 }

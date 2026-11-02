@@ -9,11 +9,11 @@
  *
  *   sync.seconds + (match.started - syncMatch.started)
  *
- * from one known point - "this match starts here" - which anyone watching can
- * set and which then places every other match on that stream. Where YouTube's
- * own start time is known (the Worker reads it when it has an API key) that is
- * the known point instead: (match.started - stream.startTime). A per-viewer
- * nudge takes up the seconds either is off by.
+ * from one known point. Usually that is automatic: YouTube's record of when
+ * the broadcast went live (the Worker reads it with its API key), giving
+ * (match.started - stream.startTime). For a stream YouTube has no time for, a
+ * viewer marks one - "this match starts here" - which places every other match
+ * for everyone. A per-viewer nudge takes up the seconds either is off by.
  */
 
 const YOUTUBE_ID = /^[A-Za-z0-9_-]{11}$/;
@@ -56,14 +56,20 @@ export function eventStreams(webcastText, added = []) {
 
 const startedAt = (match) => { const time = Date.parse(match?.started ?? ''); return Number.isFinite(time) ? time : null; };
 
-/** When a stream's video starts, in ms, from its sync point or YouTube's start time. */
+/**
+ * When a stream's video starts, in ms. YouTube's own record of when the
+ * broadcast went live comes first - it needs nobody, and no mistaken sync can
+ * override it; a viewer's sync point covers streams YouTube has no time for
+ * (an upload rather than a live broadcast).
+ */
 export function streamOrigin(stream, matchesById) {
+  const start = Date.parse(stream?.startTime ?? '');
+  if (Number.isFinite(start)) return start;
   if (stream?.sync && Number.isFinite(Number(stream.sync.seconds))) {
     const anchor = startedAt(matchesById.get(Number(stream.sync.matchId)));
     if (anchor !== null) return anchor - Number(stream.sync.seconds) * 1000;
   }
-  const start = Date.parse(stream?.startTime ?? '');
-  return Number.isFinite(start) ? start : null;
+  return null;
 }
 
 /**

@@ -137,7 +137,10 @@ function Dock({ eventId, streams, current, setCurrent, byId, nudges, onClose, on
     onNudge(videoId, delta);
     player.current?.seekTo?.(Math.max(0, time() + delta), true);
   };
-  const timed = Boolean(stream?.sync || stream?.startTime);
+  // Automatic: YouTube says when the broadcast went live. Otherwise one viewer's sync.
+  const automatic = Boolean(stream?.startTime);
+  const timed = automatic || Boolean(stream?.sync);
+  const nudged = nudges[videoId ?? ''] ? ` (nudged ${nudges[videoId!] > 0 ? '+' : '−'}${Math.abs(nudges[videoId!])}s)` : '';
 
   return <aside aria-label="Livestream" className="fixed inset-x-0 bottom-0 z-50 border-t border-white/15 bg-[var(--c-surface)] shadow-2xl sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-[440px] sm:border">
     <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
@@ -151,14 +154,14 @@ function Dock({ eventId, streams, current, setCurrent, byId, nudges, onClose, on
       {streams.length > 1 && <div className="flex flex-wrap gap-1.5">{streams.map((entry, index) => <button key={entry.videoId} onClick={() => setCurrent({ videoId: entry.videoId, seconds: -1, at: Date.now() })} aria-pressed={entry.videoId === videoId} className={`border px-2.5 py-1 font-semibold ${entry.videoId === videoId ? 'border-[var(--c-accent)] bg-[var(--c-accent)] text-[var(--c-on-accent)]' : 'border-white/15 text-white/60 hover:text-white'}`}>Stream {index + 1}</button>)}</div>}
       {videoId && <>
         <div className="flex flex-wrap items-center gap-1">{NUDGES.map(delta => <button key={delta} onClick={() => nudge(delta)} className="min-w-10 border border-white/10 px-1.5 py-1 font-mono text-[11px] text-white/70 hover:border-white/30 hover:text-white">{delta < 0 ? '−' : '+'}{Math.abs(delta) >= 60 ? `${Math.abs(delta) / 60}m` : `${Math.abs(delta)}s`}</button>)}</div>
-        <p className="text-white/50">{timed ? `Matches are placed by when they actually started${nudges[videoId] ? ` (nudged ${nudges[videoId] > 0 ? '+' : '−'}${Math.abs(nudges[videoId])}s)` : ''}. If a jump lands off, nudge it, or re-sync below.` : 'Not synced yet: find any match in the video, pick it below and press “Starts at”. Every match then gets a jump, for everyone.'}</p>
-        <div className="flex gap-1.5">
+        <p className="text-white/50">{automatic ? `Synced automatically from when the broadcast went live${nudged}. Matches are placed by when they actually started; if a jump lands a little off, nudge it.` : timed ? `Synced by a viewer${nudged}. Matches are placed by when they actually started; if a jump lands off, nudge it, or re-sync below.` : 'Not synced yet: play to the start of any match, pick it below and press “Starts at”. Every match then gets a jump, for everyone.'}</p>
+        {!automatic && <div className="flex gap-1.5">
           <select value={syncMatch} onChange={event => setSyncMatch(event.target.value)} aria-label="Match on screen" className="min-w-0 flex-1 border border-white/15 bg-black/30 px-2 py-1.5 text-xs">
             <option value="">Match on screen…</option>
             {played.map(match => <option key={match.id} value={match.id}>{match.name}{byId.size && new Set([...byId.values()].map(entry => entry.division?.id)).size > 1 ? ` · ${match.division?.name}` : ''}</option>)}
           </select>
           <button disabled={!syncMatch || position < 1} title={position < 1 ? 'Play the video to the start of a match first' : undefined} onClick={async () => { const ok = await onSync(videoId, Number(syncMatch), time()); setMessage(ok ? 'Synced for everyone.' : 'Synced on this device (could not save it for others).'); }} className="whitespace-nowrap border border-[var(--c-accent)] px-2.5 py-1.5 font-semibold text-[var(--c-accent)] disabled:opacity-40">Starts at {videoTime(position)}</button>
-        </div>
+        </div>}
       </>}
       <form onSubmit={async event => { event.preventDefault(); if (!link.trim()) return; const problem = await onAdd(link.trim()); setMessage(problem ?? 'Stream added.'); if (!problem) setLink(''); }} className="flex gap-1.5">
         <input value={link} onChange={event => setLink(event.target.value)} placeholder="Add a YouTube stream link" aria-label="Add a YouTube stream link" className="min-w-0 flex-1 border border-white/15 bg-black/30 px-2 py-1.5 text-xs placeholder:text-white/40" />

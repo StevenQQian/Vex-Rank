@@ -49,3 +49,8 @@ test('with a stream per day, a match is on the one that began most recently befo
   assert.equal(videoTime(3725), '1:02:05');
   assert.equal(videoTime(65), '1:05');
 });
+
+test('YouTube\'s start time wins over a sync point, so a mistaken sync cannot break an auto-synced stream', () => {
+  const streams = [{ videoId: 'v1', startTime: '2026-10-31T09:35:00-04:00', sync: { matchId: 2, seconds: 0 } }];
+  assert.deepEqual(matchJump(streams, byId.get(2), byId), { videoId: 'v1', seconds: 213 });
+});

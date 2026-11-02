@@ -1,6 +1,7 @@
-// The jumper's shared state: livestreams viewers added to an event, and the
-// sync point that lines each video up with the matches ("this match starts
-// here"). One person syncing a stream places every match for everyone.
+// The jumper's shared state: livestreams viewers added to an event, when each
+// broadcast went live (from YouTube, with YOUTUBE_API_KEY - the automatic
+// sync), and for streams YouTube has no time for, the sync point a viewer
+// set ("this match starts here"), which places every match for everyone.
 // Kept as one small JSON row per event in api_cache - no schema change.
 //
 //   GET  /api/streams?event=64234[&videos=id,id]   streams + YouTube start times
@@ -8,7 +9,7 @@
 //   POST /api/streams  {event, videoId, sync:{matchId, seconds}}
 import { youtubeId } from '../lib/stream-jumper.mjs';
 
-type Stream = { videoId: string; url?: string; divisionId?: number | null; sync?: { matchId: number; seconds: number } | null; startTime?: string | null; addedAt?: string };
+type Stream = { videoId: string; url?: string; divisionId?: number | null; sync?: { matchId: number; seconds: number } | null; startTime?: string | null; checkedAt?: number; addedAt?: string };
 interface StreamEnv { DB: D1Database; YOUTUBE_API_KEY?: string }
 
 const MAX_STREAMS = 8;
@@ -25,17 +26,20 @@ async function save(env: StreamEnv, event: number, streams: Stream[]) {
     .bind(key(event), JSON.stringify({ streams }), Date.now() + KEEP_FOR).run();
 }
 
-// When the broadcast went live, from YouTube - only with an API key, and only
-// once per video (it never changes after the stream starts).
-async function startTimes(env: StreamEnv, ids: string[]): Promise<Record<string, string>> {
-  if (!env.YOUTUBE_API_KEY || !ids.length) return {};
+// When the broadcast went live, from YouTube - only with an API key. A start
+// time never changes once found; a video without one (not live yet, or an
+// upload) is asked about again at most every RECHECK, so a busy event page
+// costs one quota unit per video per few minutes, not one per view.
+const RECHECK = 5 * 60000;
+async function startTimes(env: StreamEnv, ids: string[]): Promise<Record<string, string> | null> {
+  if (!env.YOUTUBE_API_KEY || !ids.length) return null;
   try {
     const url = `https://www.googleapis.com/youtube/v3/videos?part=liveStreamingDetails&id=${ids.slice(0, 20).join(',')}&key=${env.YOUTUBE_API_KEY}`;
     const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (!response.ok) return {};
+    if (!response.ok) { console.error('YouTube lookup failed', response.status); return null; }
     const body = await response.json() as { items?: { id: string; liveStreamingDetails?: { actualStartTime?: string } }[] };
     return Object.fromEntries((body.items ?? []).filter(item => item.liveStreamingDetails?.actualStartTime).map(item => [item.id, item.liveStreamingDetails!.actualStartTime!]));
-  } catch { return {}; }
+  } catch { return null; }
 }
 
 export async function streamsRoute(request: Request, env: StreamEnv): Promise<Response> {
@@ -47,13 +51,18 @@ export async function streamsRoute(request: Request, env: StreamEnv): Promise<Re
     // Videos the page found in the event's own webcast notes are timed too.
     const listed = (url.searchParams.get('videos') ?? '').split(',').filter(id => /^[A-Za-z0-9_-]{11}$/.test(id));
     const known = new Map(streams.map(stream => [stream.videoId, stream]));
-    const untimed = [...new Set([...known.keys(), ...listed])].filter(id => !known.get(id)?.startTime);
-    const found = await startTimes(env, untimed);
-    if (Object.keys(found).length) {
-      for (const [videoId, startTime] of Object.entries(found)) {
-        const stream = known.get(videoId);
-        if (stream) stream.startTime = startTime;
-        else if (streams.length < MAX_STREAMS * 2) { const entry = { videoId, startTime, listed: true } as Stream; streams.push(entry); known.set(videoId, entry); }
+    const now = Date.now();
+    const due = [...new Set([...known.keys(), ...listed])].filter(id => !known.get(id)?.startTime && now - (known.get(id)?.checkedAt ?? 0) > RECHECK);
+    const found = await startTimes(env, due);
+    if (found) {
+      for (const videoId of due) {
+        let stream = known.get(videoId);
+        if (!stream) {
+          if (streams.length >= MAX_STREAMS * 2) continue;
+          stream = { videoId, listed: true } as Stream; streams.push(stream); known.set(videoId, stream);
+        }
+        stream.checkedAt = now;
+        if (found[videoId]) stream.startTime = found[videoId];
       }
       await save(env, event, streams).catch(() => {});
     }

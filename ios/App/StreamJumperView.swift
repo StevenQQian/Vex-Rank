@@ -206,31 +206,37 @@ struct JumperPanel: View {
                 }
 
                 let stream = jumper.streams.first { $0.videoId == current.videoId }
-                Text(stream?.isTimed == true
-                     ? "Matches are placed by when they actually started. If a jump lands off, nudge it, or re-sync below."
+                let nudge = jumper.nudge(for: current.videoId)
+                let nudged = nudge != 0 ? " (nudged \(nudge > 0 ? "+" : "−")\(Int(abs(nudge)))s)" : ""
+                Text(stream?.isAutomatic == true
+                     ? "Synced automatically from when the broadcast went live\(nudged). Matches are placed by when they actually started; if a jump lands a little off, nudge it."
+                     : stream?.isTimed == true
+                     ? "Synced by a viewer\(nudged). Matches are placed by when they actually started; if a jump lands off, nudge it, or re-sync below."
                      : "Not synced yet: play to the start of any match, pick it below and tap Starts at. Every match then gets a jump, for everyone.")
                     .font(.caption2).foregroundStyle(.secondary)
 
-                HStack(spacing: 8) {
-                    Menu {
-                        ForEach(jumper.playedMatches.reversed()) { match in
-                            Button(match.name ?? "Match") { syncMatch = match.id }
+                if stream?.isAutomatic != true {
+                    HStack(spacing: 8) {
+                        Menu {
+                            ForEach(jumper.playedMatches.reversed()) { match in
+                                Button(match.name ?? "Match") { syncMatch = match.id }
+                            }
+                        } label: {
+                            Text(jumper.playedMatches.first { $0.id == (syncMatch ?? jumper.lastMatchId) }?.name ?? "Match on screen…")
+                                .font(.caption).lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 8).padding(.vertical, 6)
+                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
                         }
-                    } label: {
-                        Text(jumper.playedMatches.first { $0.id == (syncMatch ?? jumper.lastMatchId) }?.name ?? "Match on screen…")
-                            .font(.caption).lineLimit(1)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 8).padding(.vertical, 6)
-                            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                        Button("Starts at \(StreamJumper.videoTime(jumper.position))") {
+                            guard let id = syncMatch ?? jumper.lastMatchId else { return }
+                            Task { await jumper.sync(matchId: id) }
+                        }
+                        .font(.caption.weight(.semibold))
+                        .buttonStyle(.bordered)
+                        .tint(theme.accent)
+                        .disabled((syncMatch ?? jumper.lastMatchId) == nil || jumper.position < 1)
                     }
-                    Button("Starts at \(StreamJumper.videoTime(jumper.position))") {
-                        guard let id = syncMatch ?? jumper.lastMatchId else { return }
-                        Task { await jumper.sync(matchId: id) }
-                    }
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.bordered)
-                    .tint(theme.accent)
-                    .disabled((syncMatch ?? jumper.lastMatchId) == nil || jumper.position < 1)
                 }
             } else {
                 Text("No livestream is listed for this event yet. Tap + to add its YouTube link.")

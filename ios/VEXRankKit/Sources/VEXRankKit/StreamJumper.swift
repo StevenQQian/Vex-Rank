@@ -5,9 +5,10 @@ import Foundation
 /// website/lib/stream-jumper.mjs - see there for the reasoning.
 ///
 /// Matches are placed by when they actually `started`, never by their
-/// scheduled time (events run late), from one known point per stream: a sync
-/// ("this match starts here", which anyone can set for everyone) or YouTube's
-/// own start time. A per-viewer nudge takes up the remaining seconds.
+/// scheduled time (events run late), from one known point per stream:
+/// automatically, YouTube's record of when the broadcast went live; otherwise
+/// a viewer's sync ("this match starts here", set once for everyone). A
+/// per-viewer nudge takes up the remaining seconds.
 public struct EventStream: Codable, Sendable, Hashable, Identifiable {
     public struct Sync: Codable, Sendable, Hashable {
         public let matchId: Int
@@ -30,6 +31,8 @@ public struct EventStream: Codable, Sendable, Hashable, Identifiable {
     }
 
     public var isTimed: Bool { sync != nil || startTime != nil }
+    /// Timed from YouTube's broadcast start, with nobody's help.
+    public var isAutomatic: Bool { startTime != nil }
 }
 
 public struct SharedStreamsResponse: Codable, Sendable {
@@ -95,12 +98,15 @@ public enum StreamJumper {
         return formatter.date(from: value)
     }
 
-    /// When a stream's video starts, from its sync point or YouTube's start time.
+    /// When a stream's video starts. YouTube's record of when the broadcast
+    /// went live comes first - automatic, and no mistaken sync can override it;
+    /// a viewer's sync covers streams YouTube has no time for (an upload).
     public static func origin(of stream: EventStream, matches: [Int: DivisionMatch]) -> Date? {
+        if let start = time(stream.startTime) { return start }
         if let sync = stream.sync, let anchor = time(matches[sync.matchId]?.started) {
             return anchor.addingTimeInterval(-sync.seconds)
         }
-        return time(stream.startTime)
+        return nil
     }
 
     /// Where in the video `match` begins, with the viewer's nudge - or nil when
