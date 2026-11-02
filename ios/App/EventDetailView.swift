@@ -237,6 +237,8 @@ struct EventDetailView: View {
                 }
                 .listRowBackground(theme.surface)
             }
+        case .finals:
+            if let division { iqFinalsSection(division) }
         case .matches:
             if let division, detail.isIQ {
                 iqMatchSection(division)
@@ -338,6 +340,70 @@ struct EventDetailView: View {
             }
         }
         .listRowBackground(theme.surface)
+    }
+
+    /// VEX IQ teamwork finals: the placings the posted scores give, then the
+    /// schedule and results, so a reader can follow finals as they are played.
+    @ViewBuilder
+    private func iqFinalsSection(_ division: Division) -> some View {
+        let places = division.iqFinalPlaces
+        let finals = division.iqFinals
+        let pending = finals.filter { !$0.isPlayed }.count
+        Section {
+            if places.isEmpty {
+                Text("No finals scores have been posted yet.").font(.footnote).foregroundStyle(.secondary)
+            }
+            ForEach(places) { row in
+                HStack(spacing: 12) {
+                    Text("\(row.place)").font(.system(.headline, design: .rounded)).monospacedDigit()
+                        .foregroundStyle(row.place <= 3 ? theme.accent : .secondary)
+                        .frame(width: 30, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(row.teams.joined(separator: " + ")).font(.subheadline.weight(.semibold))
+                        if row.tied { Text("Tied").font(.caption2).foregroundStyle(.subtle) }
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text("\(row.score)").font(.system(.title3, design: .monospaced, weight: .semibold)).monospacedDigit()
+                        if let tiebreak = row.tiebreak { Text("tiebreak \(tiebreak)").font(.caption2).foregroundStyle(.secondary) }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        } header: {
+            Text(division.name.isEmpty ? "Finals" : "\(division.name) finals")
+        } footer: {
+            Text(pending > 0 ? "\(pending) of \(finals.count) finals still to play. Placed by posted scores; the event's official placings are final."
+                             : "Placed by posted scores; the event's official placings are final.")
+        }
+        .listRowBackground(theme.surface)
+
+        Section("Schedule and results") {
+            ForEach(finals) { match in
+                let pair = match.teamwork
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(match.name ?? "Final").font(.subheadline.weight(.medium))
+                        Spacer()
+                        Text(pair.score.map(String.init) ?? "\u{2014}")
+                            .font(.system(.title3, design: .monospaced, weight: .semibold)).monospacedDigit()
+                    }
+                    Text(pair.teams.isEmpty ? "Teams not assigned" : pair.teams.joined(separator: " + "))
+                        .font(.caption).foregroundStyle(.secondary)
+                    if !match.isPlayed {
+                        Text(Self.finalTime(match)).font(.caption2).foregroundStyle(.subtle)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+        .listRowBackground(theme.surface)
+    }
+
+    private static func finalTime(_ match: DivisionMatch) -> String {
+        let when = match.scheduled.flatMap { ISO8601DateFormatter().date(from: $0) }
+            .map { $0.formatted(date: .omitted, time: .shortened) }
+        return [when, match.field].compactMap { $0 }.joined(separator: " \u{00B7} ").nilIfBlank ?? "Not scheduled"
     }
 
     /// Teamwork matches: the pair and the score they shared.
@@ -612,4 +678,8 @@ final class EventDetailModel {
             self.error = error.localizedDescription
         }
     }
+}
+
+private extension String {
+    var nilIfBlank: String? { isEmpty ? nil : self }
 }

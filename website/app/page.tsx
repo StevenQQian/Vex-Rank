@@ -5,7 +5,7 @@ import SignedNumber from '@/components/signed-number';
 import LoadMore from '@/components/load-more';
 import StrengthHexagon, { ordinal } from '@/components/strength-hexagon';
 import { teamMatches, teamStanding, recordCheck, momentum as teamMomentum, strengthProfile } from '@/lib/team-event.mjs';
-import { iqTeamMatches, iqStanding, iqDivisionStandings, iqScoreSeries, iqStrengthProfile, teamworkPair } from '@/lib/viqrc.mjs';
+import { iqTeamMatches, iqStanding, iqDivisionStandings, iqScoreSeries, iqStrengthProfile, teamworkPair, iqFinals } from '@/lib/viqrc.mjs';
 import { PROGRAMS } from '@/lib/programs.mjs';
 import { initialSeason, hasLoadedSeason, mergeProfiles } from '@/lib/team-profile.mjs';
 import { assetUrl, siteFetch } from '@/lib/client-fetch';
@@ -189,6 +189,27 @@ async function fetchWithBackoff(url:string,attempts=3){
     await new Promise(resolve=>setTimeout(resolve,250*(2**attempt)+Math.random()*120));
   }
   throw lastError;
+}
+
+/**
+ * While an event is running and its page is visible, re-read it every 30 s so
+ * standings and match results appear as soon as events.vex has them (directly
+ * when the build has a token, else from the Worker's minute-fresh copy). One
+ * read at a time; the organizer notes already shown are kept.
+ */
+function useLiveEvent(id:string|number|undefined,details:any,setDetails:(update:(previous:any)=>any)=>void,cache:Map<string,any>){
+  const running=Boolean(details?.event)&&(()=>{const start=Date.parse(details.event.start??''),end=Date.parse(details.event.end??''),now=Date.now();return Boolean(details.event.ongoing)||(start-now<86400000&&now-end<86400000)})();
+  useEffect(()=>{
+    if(!running||id==null)return;
+    let busy=false,stopped=false;
+    const tick=async()=>{
+      if(busy||document.hidden)return;busy=true;
+      try{const response=await siteFetch(eventDetailUrl(id),{headers:{'x-vexrank-live':'1'}});if(response.ok){const data:any=await response.json();if(stopped)return;cache.set(String(id),data);setDetails((previous:any)=>({...data,organizer:Object.values(data.organizer??{}).some(Boolean)?data.organizer:previous?.organizer}))}}
+      catch{/* the next tick tries again */}finally{busy=false}
+    };
+    const timer=window.setInterval(tick,30000);
+    return()=>{stopped=true;window.clearInterval(timer)};
+  },[id,running,cache,setDetails]);
 }
 
 async function cachedJson(url:string,cache:Map<string,any>,key:string){if(cache.has(key)&&Date.now()-(cacheTimes.get(url)??0)<300000)return cache.get(key);if(requestCache.has(url))return requestCache.get(url);const request=fetchWithBackoff(url).then(async response=>{const data:any=await response.json();if(!response.ok)throw new Error(data.error||'Request failed');cache.set(key,data);cacheTimes.set(url,Date.now());return data}).catch(error=>{if(error?.name==='TimeoutError')throw new Error('Official data took too long to load. Please retry.');throw error}).finally(()=>requestCache.delete(url));requestCache.set(url,request);return request}
@@ -540,6 +561,7 @@ function EventInfoView({ event, goBack, openTeam, openTeamAtEvent }: {event:any;
     cachedJson(eventDetailUrl(event.id),eventDetailCache,String(event.id)).then((data:any)=>{if(active)setDetails(data)}).catch(error=>{if(active)setDetailError(error.message)}).finally(()=>{if(active)setLoading(false)});
     return()=>{active=false};
   },[event.id,detailRetry]);
+  useLiveEvent(event.id,details,setDetails,eventDetailCache);
   const info=details?.event;
   const teamsList=details?.teams ?? [];
   const divisions=details?.divisions ?? [];
@@ -604,18 +626,19 @@ function EventResults({openTeamAtEvent,divisions,skills,resultsTab,setResultsTab
  */
 function IQEventResults({openTeamAtEvent,divisions,skills,resultsTab,setResultsTab,skillsMode,setSkillsMode,qualificationView,setQualificationView}:any) {
   const [divisionIndex,setDivisionIndex]=useState(0);
-  // A final-only division holds the cross-division finals and no standings;
-  // with finals not served, it would only ever be an empty choice.
-  const seeded=divisions.filter((division:any)=>(division.rankings??[]).length||(division.matches??[]).length);
+  // A final-only division holds the cross-division finals and no standings, so
+  // it belongs under Finals, not Qualification.
+  const seeded=divisions.filter((division:any)=>(division.rankings??[]).length||(division.matches??[]).some((match:any)=>Number(match.round)===2));
+  const finalsDivisions=divisions.map((division:any)=>({division,finals:iqFinals(division)})).filter((entry:any)=>entry.finals.matches.length);
   const activeIndex=Math.min(divisionIndex,Math.max(0,seeded.length-1));
   const division=seeded[activeIndex];
-  const tab=resultsTab==='skills'?'skills':'qualification';
+  const tab=resultsTab==='skills'?'skills':resultsTab==='finals'&&finalsDivisions.length?'finals':'qualification';
   const skillTeams=Array.from(skills.reduce((map:Map<string,any>,run:any)=>{const key=String(run.team?.id ?? run.team?.name);const row=map.get(key)??{team:run.team,driver:0,coding:0};if(String(run.type).toLowerCase().includes('driver'))row.driver=Math.max(row.driver,run.score??0);else row.coding=Math.max(row.coding,run.score??0);map.set(key,row);return map},new Map()).values()).map((row:any)=>({...row,combined:row.driver+row.coding})).sort((a:any,b:any)=>b[skillsMode==='auto'?'coding':skillsMode]-a[skillsMode==='auto'?'coding':skillsMode]);
   const rows=division?iqDivisionStandings(division):[];
   const qualifying=(division?.matches??[]).filter((match:any)=>Number(match.round)===2||/qual|teamwork/i.test(match.name??''));
   const segment=(active:boolean)=>`min-h-10 border px-4 py-2 text-xs font-semibold uppercase tracking-wider transition-colors ${active?'border-[var(--c-accent)] bg-[var(--c-accent)] text-[var(--c-on-accent)]':'border-white/10 text-white/45 hover:text-white'}`;
   return <article className="border border-white/10 bg-[var(--c-surface)] p-6"><SectionTitle eyebrow="Official competition data" title="Results" />
-    <div className="mt-5 flex flex-wrap border border-white/10">{([['qualification','Qualification'],['skills','Skills ranking']] as const).map(([key,label])=><button key={key} onClick={()=>setResultsTab(key)} aria-pressed={tab===key} className={`border-r border-white/10 px-5 py-3 text-xs font-semibold uppercase tracking-wider transition-colors ${tab===key?'bg-white text-black':'text-white/45 hover:text-white'}`}>{label}</button>)}</div>
+    <div className="mt-5 flex flex-wrap border border-white/10">{([['qualification','Qualification'],...(finalsDivisions.length?[['finals','Finals']]:[]),['skills','Skills ranking']] as [string,string][]).map(([key,label])=><button key={key} onClick={()=>setResultsTab(key)} aria-pressed={tab===key} className={`border-r border-white/10 px-5 py-3 text-xs font-semibold uppercase tracking-wider transition-colors ${tab===key?'bg-white text-black':'text-white/45 hover:text-white'}`}>{label}</button>)}</div>
     {tab==='qualification'&&seeded.length>1&&<div className="mt-4 flex flex-wrap items-center border border-white/10 bg-black/15"><span className="px-4 py-3 text-[11px] font-semibold uppercase tracking-[.16em] text-white/50">Division</span>{seeded.map((entry:any,index:number)=><button key={entry.id??index} onClick={()=>setDivisionIndex(index)} aria-pressed={activeIndex===index} className={`border-l border-white/10 px-5 py-3 text-xs font-semibold uppercase tracking-wider transition-colors ${activeIndex===index?'bg-[var(--c-accent)] text-[var(--c-on-accent)]':'text-white/50 hover:bg-white/[.04] hover:text-white'}`}>{entry.name||`Division ${index+1}`}</button>)}</div>}
     {tab==='qualification'&&<div className="mt-5"><div className="mb-4 flex gap-2">{[['ranking','Rankings'],['matches','Teamwork matches']].map(([key,label])=><button key={key} onClick={()=>setQualificationView(key)} aria-pressed={qualificationView===key} className={segment(qualificationView===key)}>{label}</button>)}</div>
       {!division?<Empty text="Qualification rankings and matches have not been posted yet." />:<section><h3 className="mb-3 text-lg font-semibold">{division.name || 'Division'}</h3>
@@ -623,6 +646,13 @@ function IQEventResults({openTeamAtEvent,divisions,skills,resultsTab,setResultsT
         :<TeamworkGrid matches={qualifying} />}
       </section>}
     </div>}
+    {tab==='finals'&&<div className="mt-5 space-y-8">{finalsDivisions.map(({division:finalsDivision,finals}:any)=><section key={finalsDivision.id??finalsDivision.name}>
+      <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2"><h3 className="text-lg font-semibold">{finalsDivision.name||'Finals'}</h3><p className="text-xs text-white/50">{finals.pending?`${finals.pending} of ${finals.matches.length} finals still to play`:'All finals played'}</p></div>
+      {finals.standings.length?<div className="overflow-x-auto border border-white/10"><Table><TableHeader><TableRow className="border-white/10"><TableHead className="px-4">Place</TableHead><TableHead>Teams</TableHead><TableHead className="px-4 text-right">Score</TableHead></TableRow></TableHeader><TableBody>{finals.standings.map((row:any)=><TableRow key={row.teams.join('+')} className="border-white/[.07]"><TableCell className="px-4 font-semibold">{row.place}{row.tied?<span className="ml-1 text-xs font-normal text-white/50">tied</span>:null}</TableCell><TableCell>{row.teams.map((number:string,index:number)=><span key={number}>{index>0&&<span className="text-white/45"> + </span>}<button onClick={()=>openTeamAtEvent({number})} className="font-semibold hover:text-[var(--c-accent)]">{number}</button></span>)}</TableCell><TableCell className="px-4 text-right font-mono text-lg font-semibold">{row.score}{row.tiebreak!==null?<span className="ml-2 text-xs font-normal text-white/50">tiebreak {row.tiebreak}</span>:null}</TableCell></TableRow>)}</TableBody></Table></div>:<p className="text-sm text-white/50">No finals scores have been posted yet.</p>}
+      <h4 className="mt-6 text-sm font-semibold uppercase tracking-wider text-white/55">Schedule and results</h4>
+      <TeamworkGrid matches={(finalsDivision.matches??[]).filter((match:any)=>Number(match.round)===15)} />
+      <p className="mt-3 text-xs text-white/45">Placed by the score each pair shared, from posted results. The event's official placings are final.</p>
+    </section>)}</div>}
     {tab==='skills'&&<div className="mt-5"><div className="mb-4 flex flex-wrap gap-2">{[['driver','Driver skills'],['auto','Coding skills'],['combined','Combined skills']].map(([key,label])=><button key={key} onClick={()=>setSkillsMode(key)} aria-pressed={skillsMode===key} className={segment(skillsMode===key)}>{label}</button>)}</div>{skillTeams.length?<div className="overflow-x-auto border border-white/10"><Table><TableHeader><TableRow className="border-white/10"><TableHead className="w-20 px-4">Rank</TableHead><TableHead>Team</TableHead><TableHead className="text-right">Driver</TableHead><TableHead className="text-right">Coding</TableHead><TableHead className="px-4 text-right">Combined</TableHead></TableRow></TableHeader><TableBody>{skillTeams.map((row:any,index:number)=><TableRow key={row.team?.id ?? index} className="border-white/[.07]"><TableCell className="px-4 font-semibold">#{index+1}</TableCell><TableCell><b>{row.team?.name || row.team?.number}</b></TableCell><TableCell className="text-right font-mono">{row.driver}</TableCell><TableCell className="text-right font-mono">{row.coding}</TableCell><TableCell className="px-4 text-right font-mono font-semibold">{row.combined}</TableCell></TableRow>)}</TableBody></Table></div>:<Empty text="Skills scores have not been posted yet." />}</div>}
   </article>;
 }
@@ -630,7 +660,7 @@ function IQEventResults({openTeamAtEvent,divisions,skills,resultsTab,setResultsT
 /** Teamwork match cards: the pair and the score they shared. No colours or winner. */
 function TeamworkGrid({matches}:{matches:any[]}) {
   if(!matches.length)return <p className="mt-3 text-sm text-white/50">Teamwork match results have not been posted yet.</p>;
-  return <div className="mt-4 grid gap-2 md:grid-cols-2">{matches.map((match:any)=>{const pair=teamworkPair(match);return <div key={match.id} className="border border-white/10 p-4"><div className="flex items-baseline justify-between gap-3"><b>{pair.name}</b><span className="text-[11px] text-white/50">{pair.played?(pair.field||'Played'):'Not played'}</span></div><div className="mt-3 flex items-end justify-between gap-4"><span className="min-w-0 text-sm text-white/75">{pair.teams.length?pair.teams.join(' + '):'Teams not assigned'}</span><span className="font-mono text-2xl font-semibold">{pair.score??'—'}</span></div></div>})}</div>;
+  return <div className="mt-4 grid gap-2 md:grid-cols-2">{matches.map((match:any)=>{const pair=teamworkPair(match);return <div key={match.id} className="border border-white/10 p-4"><div className="flex items-baseline justify-between gap-3"><b>{pair.name}</b><span className="text-[11px] text-white/50">{pair.played?(pair.field||'Played'):pair.scheduled?`${new Date(pair.scheduled).toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'})}${pair.field?` · ${pair.field}`:''}`:'Not scheduled'}</span></div><div className="mt-3 flex items-end justify-between gap-4"><span className="min-w-0 text-sm text-white/75">{pair.teams.length?pair.teams.join(' + '):'Teams not assigned'}</span><span className="font-mono text-2xl font-semibold">{pair.score??'—'}</span></div></div>})}</div>;
 }
 
 function qualificationMatches(division:any) { return (division.matches??[]).filter((match:any)=>Number(match.round)===2||/qual/i.test(match.name??'')).sort((a:any,b:any)=>Number(a.matchnum)-Number(b.matchnum)); }
@@ -1022,6 +1052,7 @@ function TeamEventView({ event, team, backLabel, goBack, openEvent, openTeam }: 
     cachedJson(eventDetailUrl(key),eventDetailCache,key).then((data:any)=>{if(active)setDetails(data)}).catch((failure:any)=>{if(active)setError(describeFetchError(failure,failure.message||'Event data could not be loaded.'))}).finally(()=>{if(active)setRefreshing(false)});
     return()=>{active=false};
   },[key,reload]);
+  useLiveEvent(key,details,setDetails,eventDetailCache);
   const number=String(team.number??'');
   // Read from the event itself, so a link into an IQ event is read as IQ
   // whatever program the reader last had selected.
