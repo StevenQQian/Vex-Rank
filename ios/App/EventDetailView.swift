@@ -33,6 +33,23 @@ struct EventDetailView: View {
     /// touch. A State initial value, not a later assignment.
     @State private var sort: StandingSort = EventDetailView.launchSort
 
+    init(event: EventRef) {
+        self.event = event
+        // The launch hooks (-section, -find, -sort) belong to the event the
+        // app was launched into with -event. Applied to every event screen,
+        // `-find 252H` filtered each event opened afterwards down to 252H.
+        let launched = Self.launchArgument("-event") == event.id
+        _tab = State(initialValue: launched ? Self.launchSection : nil)
+        _query = State(initialValue: launched ? Self.launchQuery : "")
+        _sort = State(initialValue: launched ? Self.launchSort : .rank)
+    }
+
+    private static func launchArgument(_ flag: String) -> String? {
+        guard let index = CommandLine.arguments.firstIndex(of: flag),
+              CommandLine.arguments.indices.contains(index + 1) else { return nil }
+        return CommandLine.arguments[index + 1]
+    }
+
     private static var launchSection: EventSection? {
         guard let index = CommandLine.arguments.firstIndex(of: "-section"),
               CommandLine.arguments.indices.contains(index + 1)
