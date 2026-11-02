@@ -41,7 +41,7 @@ struct TeamEventMatchesView: View {
                                 }
                             }
 
-                            Divider().overlay(Color.white.opacity(0.14))
+                            Divider().overlay(Color.hairline)
 
                             HStack(spacing: 14) {
                                 stat("WP", standing.wp.map(String.init))
@@ -234,7 +234,7 @@ struct TeamEventMatchesView: View {
                         .font(.caption2).foregroundStyle(.secondary)
                 }
             }
-            Divider().overlay(Color.white.opacity(0.14))
+            Divider().overlay(Color.hairline)
             HStack(spacing: 14) {
                 stat("High", standing.highScore.map(String.init))
                 stat("Played", String(standing.played))
@@ -260,6 +260,10 @@ struct TeamEventMatchesView: View {
                 Text(match.name).font(.subheadline.weight(.medium))
                 Spacer(minLength: 8)
                 if let score = match.score {
+                    if model.rulings.ruling(match: match.id, team: ref.team) == .dq {
+                        Text("DQ").font(.caption2.weight(.bold)).foregroundStyle(Color.loss)
+                            .accessibilityHint(MatchRuling.dq.explanation)
+                    }
                     Text("\(score)")
                         .font(.system(.title3, design: .monospaced, weight: .semibold))
                         .monospacedDigit()
@@ -267,6 +271,11 @@ struct TeamEventMatchesView: View {
                     Text(time.formatted(date: .omitted, time: .shortened))
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                 }
+            }
+            let disqualifiedPartners = match.partners.filter { model.rulings.ruling(match: match.id, team: $0) == .dq }
+            if match.isPlayed, !disqualifiedPartners.isEmpty {
+                Text("PARTNER \(disqualifiedPartners.joined(separator: ", ")) · DQ")
+                    .font(.caption2.weight(.bold)).foregroundStyle(Color.loss)
             }
             if !match.partners.isEmpty {
                 Text("\(match.isPlayed ? "Scored with" : "With") \(match.partners.joined(separator: ", "))")
@@ -307,15 +316,14 @@ struct TeamEventMatchesView: View {
                 Text(match.name).font(.subheadline.weight(.medium))
                 Spacer(minLength: 8)
                 if match.isPlayed {
-                    // Marked as "on score" when the standings disagree with
-                    // what the scores add up to, because then one of these
-                    // labels is wrong and nothing in the data says which.
-                    Text(model.check?.agrees == false
-                         ? "\(outcomeLabel(match.outcome)) ON SCORE"
-                         : outcomeLabel(match.outcome))
+                    // The official result where the standings changed it
+                    // (a ruling found with certainty), otherwise the score's.
+                    let ruling = model.rulings.ruling(match: match.id, team: ref.team)
+                    let result: TeamMatch.Outcome = ruling == .ruledLoss ? .lost : ruling == .ruledWin ? .won : match.outcome
+                    Text(ruling?.label ?? outcomeLabel(match.outcome))
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(model.check?.agrees == false
-                                         ? .secondary : outcomeColour(match.outcome))
+                        .foregroundStyle(outcomeColour(result))
+                        .accessibilityHint(ruling?.explanation ?? "")
                 } else if let time = match.scheduled {
                     Text(time.formatted(date: .omitted, time: .shortened))
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
@@ -323,11 +331,7 @@ struct TeamEventMatchesView: View {
             }
 
             HStack(spacing: 8) {
-                Text(match.colour == "red" ? "RED" : "BLUE")
-                    .font(.system(size: 9, weight: .bold)).foregroundStyle(.white)
-                    .padding(.horizontal, 5).padding(.vertical, 2)
-                    .background(match.colour == "red" ? Color.red : Color.blue)
-                    .clipShape(RoundedRectangle(cornerRadius: 3))
+                AllianceTag(isRed: match.colour == "red")
 
                 if match.isPlayed, let mine = match.scoreFor, let theirs = match.scoreAgainst {
                     // Their score first: the whole screen is from their side.
@@ -347,7 +351,7 @@ struct TeamEventMatchesView: View {
             }
             if !match.opponents.isEmpty {
                 Text("vs \(match.opponents.joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(.primary.opacity(0.8))
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 2)
@@ -364,8 +368,8 @@ struct TeamEventMatchesView: View {
 
     private func outcomeColour(_ outcome: TeamMatch.Outcome) -> Color {
         switch outcome {
-        case .won: return .green
-        case .lost: return .red
+        case .won: return .win
+        case .lost: return .loss
         default: return .secondary
         }
     }
@@ -380,6 +384,8 @@ final class TeamEventMatchesModel {
     private(set) var standing: EventStanding?
     private(set) var momentum: [MomentumPoint] = []
     private(set) var check: RecordCheck?
+    /// Official rulings at the event (DQs, results the standings changed).
+    private(set) var rulings = OfficialRulings()
     private(set) var strength: StrengthProfile?
     private(set) var error: String?
     /// VEX IQ: read from the event, not the selected program, so a link into
@@ -396,6 +402,7 @@ final class TeamEventMatchesModel {
         error = nil
         do {
             let detail = try await api.eventDetail(id: ref.event.id, fresh: force)
+            rulings = detail.officialRulings
             if detail.isIQ {
                 let teamwork = detail.iqMatches(for: ref.team)
                 isIQ = true

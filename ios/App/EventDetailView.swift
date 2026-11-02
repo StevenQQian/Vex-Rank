@@ -65,7 +65,7 @@ struct EventDetailView: View {
                 let division = divisions.first { $0.id == divisionID } ?? divisions.first
 
                 controls(tabs: tabs, selected: selected, divisions: divisions, division: division, isIQ: detail.isIQ)
-                Divider()
+                Divider().overlay(Color.hairline)
                 list(detail, tab: selected, division: division)
             } else {
                 list(nil, tab: nil, division: nil)
@@ -104,7 +104,7 @@ struct EventDetailView: View {
                 divisionID = nil
             }
 
-            HStack(spacing: 14) {
+            HStack(spacing: 8) {
                 // Only when the tab spans more than one.
                 if divisions.count > 1, selected?.isPerDivision == true {
                     Menu {
@@ -112,10 +112,9 @@ struct EventDetailView: View {
                             Button(option.name) { divisionID = option.id }
                         }
                     } label: {
-                        Label(division?.name ?? "Division", systemImage: "square.split.2x1")
-                            .font(.caption.weight(.semibold))
+                        FilterPill(division?.name ?? "Division", icon: "square.split.2x1", isActive: false)
                     }
-                    .tint(theme.accent)
+                    .buttonStyle(.plain)
                 }
 
                 // V5 only: the other orders are fitted ratings, which need an opponent.
@@ -134,18 +133,17 @@ struct EventDetailView: View {
                             }
                         }
                     } label: {
-                        Label(sort == .rank ? "Seeding rank" : "By \(sort.rawValue)",
-                              systemImage: "arrow.up.arrow.down")
-                            .font(.caption.weight(.semibold))
+                        FilterPill(sort == .rank ? "Seeding rank" : "By \(sort.rawValue)",
+                                   icon: "arrow.up.arrow.down", isActive: sort != .rank)
                     }
-                    .tint(theme.accent)
+                    .buttonStyle(.plain)
                 }
                 Spacer(minLength: 0)
             }
             .padding(.horizontal, 16)
         }
         .padding(.top, 4)
-        .padding(.bottom, 10)
+        .padding(.bottom, 6)
     }
 
     // MARK: - Content
@@ -223,6 +221,7 @@ struct EventDetailView: View {
 
     @ViewBuilder
     private func content(_ detail: EventDetailResponse, tab: EventSection?, division: Division?) -> some View {
+        let rulings = detail.officialRulings
         switch tab {
         case .rankings:
             if let division, detail.isIQ { iqStandings(division) } else if let division { standings(division) }
@@ -241,10 +240,10 @@ struct EventDetailView: View {
             if let division { iqFinalsSection(division) }
         case .matches:
             if let division, detail.isIQ {
-                iqMatchSection(division)
+                iqMatchSection(division, rulings: rulings)
             } else if let division {
-                matchSection("Qualification", division.qualification, key: "qual-\(division.id)")
-                matchSection("Elimination", division.elimination, key: "elim-\(division.id)")
+                matchSection("Qualification", division.qualification, key: "qual-\(division.id)", rulings: rulings)
+                matchSection("Elimination", division.elimination, key: "elim-\(division.id)", rulings: rulings)
             }
         case .awards:
             awards(detail)
@@ -284,11 +283,11 @@ struct EventDetailView: View {
                             // stat line when that is no longer the same thing.
                             Text("#\(order == .rank ? row.rank : (all.firstIndex(where: { $0.team.id == row.team.id }).map { $0 + 1 } ?? row.rank))")
                                 .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(theme.accent)
+                                .foregroundStyle(.secondary)
                                 .frame(width: 44, alignment: .leading)
                                 .monospacedDigit()
                             // The API carries the number in `name`.
-                            Text(row.team.name).font(.subheadline)
+                            Text(row.team.name).font(.subheadline.weight(.semibold))
                             Spacer()
                             Text(row.record).font(.caption).foregroundStyle(.secondary)
                                 .monospacedDigit()
@@ -317,10 +316,10 @@ struct EventDetailView: View {
                     HStack {
                         Text("#\(row.rank)")
                             .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(theme.accent)
+                            .foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .leading)
                             .monospacedDigit()
-                        Text(row.number).font(.subheadline)
+                        Text(row.number).font(.subheadline.weight(.semibold))
                         Spacer()
                         VStack(alignment: .trailing, spacing: 1) {
                             Text(row.average.map { String(format: "%.1f", $0) } ?? "\u{2014}")
@@ -408,7 +407,7 @@ struct EventDetailView: View {
 
     /// Teamwork matches: the pair and the score they shared.
     @ViewBuilder
-    private func iqMatchSection(_ division: Division) -> some View {
+    private func iqMatchSection(_ division: Division, rulings: OfficialRulings) -> some View {
         let key = "qual-\(division.id)"
         let rows = division.qualification.filter { match in
             search.isEmpty || match.teamwork.teams.contains { $0.lowercased().contains(search) } || self.matches(match.name)
@@ -430,6 +429,7 @@ struct EventDetailView: View {
                         if !match.isPlayed {
                             Text("Not played").font(.caption2).foregroundStyle(.subtle)
                         }
+                        rulingTags(match, teams: pair.teams, rulings: rulings)
                     }
                     .padding(.vertical, 2)
                 }
@@ -502,10 +502,10 @@ struct EventDetailView: View {
                 HStack {
                     Text("#\(index + 1)")
                         .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(theme.accent)
+                        .foregroundStyle(.secondary)
                         .frame(width: 44, alignment: .leading)
                         .monospacedDigit()
-                    Text(leader.number).font(.subheadline)
+                    Text(leader.number).font(.subheadline.weight(.semibold))
                     Spacer()
                     VStack(alignment: .trailing, spacing: 1) {
                         Text("\(leader.total)")
@@ -542,7 +542,7 @@ struct EventDetailView: View {
     }
 
     @ViewBuilder
-    private func matchSection(_ title: String, _ all: [DivisionMatch], key: String) -> some View {
+    private func matchSection(_ title: String, _ all: [DivisionMatch], key: String, rulings: OfficialRulings) -> some View {
         // A search over matches means "the matches this team is in".
         let matches = all.filter { match in
             search.isEmpty
@@ -553,7 +553,7 @@ struct EventDetailView: View {
         if !matches.isEmpty {
             Section(title) {
                 ForEach(visible(matches, key: key)) { match in
-                    matchRow(match)
+                    matchRow(match, rulings: rulings)
                 }
                 revealButton(total: matches.count, key: key, noun: "matches")
             }
@@ -561,7 +561,7 @@ struct EventDetailView: View {
         }
     }
 
-    private func matchRow(_ match: DivisionMatch) -> some View {
+    private func matchRow(_ match: DivisionMatch, rulings: OfficialRulings) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text(match.name ?? "Match").font(.subheadline.weight(.medium))
@@ -570,20 +570,41 @@ struct EventDetailView: View {
                     .font(.caption2).foregroundStyle(.secondary)
             }
             HStack(alignment: .top, spacing: 12) {
-                alliance(match.red, colour: .red, won: match.winner == "red", played: match.isPlayed)
-                alliance(match.blue, colour: .blue, won: match.winner == "blue", played: match.isPlayed)
+                alliance(match.red, colour: .allianceRed, won: match.winner == "red", played: match.isPlayed)
+                alliance(match.blue, colour: .allianceBlue, won: match.winner == "blue", played: match.isPlayed)
             }
+            rulingTags(match, teams: (match.red?.numbers ?? []) + (match.blue?.numbers ?? []), rulings: rulings)
         }
         .padding(.vertical, 2)
     }
 
+    /// Teams whose official result in `match` differs from the score: DQ and
+    /// ruled losses in red, ruled wins in green.
+    @ViewBuilder
+    private func rulingTags(_ match: DivisionMatch, teams: [String], rulings: OfficialRulings) -> some View {
+        let marked = teams.compactMap { team in rulings.ruling(match: match.id, team: team).map { (team, $0) } }
+        if !marked.isEmpty {
+            HStack(spacing: 10) {
+                ForEach(marked, id: \.0) { team, ruling in
+                    Text("\(team) · \(ruling.label)")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(ruling == .ruledWin ? Color.win : Color.loss)
+                        .accessibilityHint(ruling.explanation)
+                }
+            }
+        }
+    }
+
     private func alliance(_ alliance: MatchAlliance?, colour: Color, won: Bool, played: Bool) -> some View {
         HStack(spacing: 8) {
-            Rectangle().fill(colour).frame(width: 2)
+            // The bar says which alliance; the score's weight says who won.
+            // Scores in the alliance colour made every row red and blue and
+            // left the winner to be read from a bold that barely showed.
+            RoundedRectangle(cornerRadius: 1.5).fill(colour).frame(width: 3)
             VStack(alignment: .leading, spacing: 2) {
                 Text(played ? (alliance?.score.map(String.init) ?? "—") : "—")
-                    .font(.system(.title3, design: .monospaced, weight: won ? .bold : .regular))
-                    .foregroundStyle(colour)
+                    .font(.system(.title3, design: .rounded, weight: won ? .bold : .regular))
+                    .foregroundStyle(won ? Color.primary : Color.secondary)
                     .monospacedDigit()
                 // Plain text, not links: a NavigationLink inside a list row
                 // draws its own disclosure, and four of them per match reads as
