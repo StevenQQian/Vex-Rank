@@ -13,7 +13,7 @@ import { assetUrl, siteFetch } from '@/lib/client-fetch';
 import { bracketRound } from '@/lib/bracket';
 import { routeToHash, hashToRoute } from '@/lib/routes.mjs';
 import PakaLoader from '@/components/paka';
-import { JumperProvider, JumpButton, WatchButton } from '@/components/stream-jumper';
+import { JumperProvider, JumpButton, WatchButton, LivestreamPage } from '@/components/stream-jumper';
 import { vexCountries, vexEventRegions, eventRegionsForCountry } from '@/lib/event-regions.mjs';
 
 import { createContext, Fragment, useCallback, useContext, useEffect, useMemo, useState } from 'react';
@@ -23,7 +23,7 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 
-type View = 'home' | 'events' | 'event' | 'teamEvent' | 'rankings' | 'stats' | 'teams' | 'team';
+type View = 'home' | 'events' | 'event' | 'teamEvent' | 'eventLive' | 'rankings' | 'stats' | 'teams' | 'team';
 
 const THEMES=[
   {id:'midnight',name:'Midnight',swatch:'#ee3240'},
@@ -286,6 +286,9 @@ export default function Home() {
   const [selectedTeam, setSelectedTeam] = useState<any>({number:'',name:''});
   const [teamReturnView,setTeamReturnView]=useState<View>('teams');
   const [teamEventReturnView,setTeamEventReturnView]=useState<View>('event');
+  // The livestream page: which match to open at, a team to filter by, and where Back goes.
+  const [liveTarget,setLiveTarget]=useState<{matchId?:number;team?:string}|null>(null);
+  const [liveReturnView,setLiveReturnView]=useState<View>('event');
   const [selectedEvent, setSelectedEvent] = useState<any>({});
   const [navigationRestored,setNavigationRestored]=useState(false);
 
@@ -440,9 +443,10 @@ export default function Home() {
     setTeamSearch(''); setTeamRegion('All'); setTeamDirectoryRegion('All'); setRankingRange('All');
     setRankingViewState(rankingStateFor(next));
     setLiveTeams([]); setRankingsMeta(null); setRankingsError(''); setHomeEvents([]);
-    go(view === 'event' || view === 'teamEvent' ? 'events' : view === 'team' ? (['events','event','teamEvent'].includes(teamReturnView) ? 'events' : teamReturnView) : view);
+    go(view === 'event' || view === 'teamEvent' || view === 'eventLive' ? 'events' : view === 'team' ? (['events','event','teamEvent'].includes(teamReturnView) ? 'events' : teamReturnView) : view);
   };
   const openEvent = (event:any) => { void prefetchEvent(event.id);setSelectedEvent(event); go('event'); };
+  const openLive = (event:any,target?:{matchId?:number;team?:string}) => { setSelectedEvent((current:any)=>String(current?.id)===String(event.id)?current:event);setLiveTarget(target??null);setLiveReturnView(view==='teamEvent'?'teamEvent':'event');go('eventLive');window.scrollTo({top:0,behavior:'instant' as ScrollBehavior}); };
   const openTeamAtEvent = (team:any,event:any) => { void prefetchEvent(event.id);setSelectedTeam(team);setSelectedEvent(event);setTeamEventReturnView(view==='team'?'team':'event');go('teamEvent'); };
 
   const shownEvents = useMemo(() => eventRows.filter((e:any) => {
@@ -480,8 +484,9 @@ export default function Home() {
     <div key={view} className="view-enter">
     {view === 'home' && <HomeView go={go} openTeam={openTeam} openEvent={openEvent} eventRows={homeEvents} teamRows={teamRows} teamsLoading={!rankingsMeta&&!rankingsError} loading={eventsLoading} error={eventsError} retry={()=>setEventsRetry(value=>value+1)} />}
     {view === 'events' && <EventsView loading={eventsLoading} error={eventsError} retry={()=>setEventsRetry(value=>value+1)} results={shownEvents} live={eventsLive} openEvent={openEvent} search={eventSearch} setSearch={setEventSearch} filters={{region,eventClass,format,time,grade}} setters={{setRegion,setEventClass,setFormat,setTime,setGrade}} extras={eventExtras} setExtras={setEventExtras} />}
-    {view === 'event' && <EventInfoView key={selectedEvent.id} event={selectedEvent} goBack={() => go('events')} openTeam={openTeam} openTeamAtEvent={(team:any)=>openTeamAtEvent(team,selectedEvent)} />}
-    {view === 'teamEvent' && <TeamEventView key={`${selectedEvent.id}:${selectedTeam.number}`} event={selectedEvent} team={selectedTeam} backLabel={teamEventReturnView==='team'?String(selectedTeam.number||'team'):'event'} goBack={() => go(teamEventReturnView)} openEvent={openEvent} openTeam={openTeam} />}
+    {view === 'event' && <EventInfoView key={selectedEvent.id} event={selectedEvent} goBack={() => go('events')} openTeam={openTeam} openTeamAtEvent={(team:any)=>openTeamAtEvent(team,selectedEvent)} openLive={(target?:any)=>openLive(selectedEvent,target)} />}
+    {view === 'eventLive' && <LivestreamView key={selectedEvent.id} event={selectedEvent} target={liveTarget} backLabel={liveReturnView==='teamEvent'?String(selectedTeam?.number||'team'):'event'} goBack={() => go(liveReturnView)} />}
+    {view === 'teamEvent' && <TeamEventView key={`${selectedEvent.id}:${selectedTeam.number}`} event={selectedEvent} team={selectedTeam} backLabel={teamEventReturnView==='team'?String(selectedTeam.number||'team'):'event'} goBack={() => go(teamEventReturnView)} openEvent={openEvent} openTeam={openTeam} openLive={(target?:any)=>openLive(selectedEvent,target)} />}
     {!isIQ(program)&&(view==='rankings'||view==='stats'||view==='home')&&rankingsError&&<LoadError message={rankingsError} retry={()=>setRankingsRetry(value=>value+1)} />}
     {view === 'rankings' && isIQ(program) && <IQRankingsView teams={teamRows} meta={rankingsMeta} openTeam={openTeam} savedState={rankingViewState} setSavedState={setRankingViewState} />}
     {view === 'rankings' && !isIQ(program) && <RankingsView teams={teamRows} meta={rankingsMeta} failed={Boolean(rankingsError)} openTeam={openTeam} savedState={rankingViewState} setSavedState={setRankingViewState} />}
@@ -557,7 +562,7 @@ function EventsView({ loading,error,retry,results, live, openEvent, search, setS
   </section>;
 }
 
-function EventInfoView({ event, goBack, openTeam, openTeamAtEvent }: {event:any;goBack:()=>void;openTeam:(team:any)=>void;openTeamAtEvent:(team:any)=>void}) {
+function EventInfoView({ event, goBack, openTeam, openTeamAtEvent, openLive }: {event:any;goBack:()=>void;openTeam:(team:any)=>void;openTeamAtEvent:(team:any)=>void;openLive?:(target?:{matchId?:number;team?:string})=>void}) {
   const [details,setDetails] = useState<any>(()=>eventDetailCache.get(String(event.id))??null);
   const [loading,setLoading] = useState(()=>!eventDetailCache.has(String(event.id)));
   const [tab,setTab] = useState('general');
@@ -593,7 +598,7 @@ function EventInfoView({ event, goBack, openTeam, openTeamAtEvent }: {event:any;
   const eventDays=Array.from({length:Math.min(10,Math.max(1,Math.floor((new Date(dateEnd).getTime()-new Date(dateStart).getTime())/86400000)+1))},(_,index)=>new Date(new Date(dateStart).getTime()+index*86400000));
   const agendaData=parseAgenda(organizer.agenda,eventDays);
   const generalSummary=simplifyGeneralInfo(organizer.general);
-  return <JumperProvider eventId={event.id} divisions={divisions} webcast={organizer.webcast}><section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8">
+  return <JumperProvider eventId={event.id} divisions={divisions} webcast={organizer.webcast} onWatch={openLive&&((match?:any)=>openLive(match?{matchId:Number(match.id)}:undefined))}><section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8">
     <button onClick={goBack} className="-ml-1 mb-4 flex min-h-11 items-center gap-2 px-1 text-sm font-bold text-white/50 transition-colors hover:text-white"><ArrowLeft className="h-4 w-4" /> Back to events</button>
     <div className="border border-white/10 bg-[var(--c-hero)] p-6 sm:p-8"><div className="flex flex-wrap items-center gap-2"><Tier value={event.tier} /><EventStatus value={/cancell?ed/i.test(info?.name??event.name??'')?'Cancelled':info?.ongoing?'In progress':info?.end?(new Date(info.end)<new Date()?'Completed':'Upcoming'):(event.status??'Upcoming')} /></div><p className="mt-5 text-[11px] italic text-white/45">{event.sku ?? info?.sku ?? 'Official V5RC event'}</p><h1 className="font-display mt-1.5 max-w-4xl text-[2rem] leading-[1.1] sm:text-[2.75rem]">{info?.name ?? event.name}</h1><a href={officialUrl} target="_blank" rel="noreferrer" className="mt-4 inline-flex items-center gap-2 text-sm text-white/45 hover:text-white">Open on Event.VEX <ArrowUpRight className="h-4 w-4" /></a><div className="mt-6 flex flex-wrap gap-x-8 gap-y-3 text-sm text-white/55"><span className="flex items-center gap-2"><CalendarDays className="h-4 w-4 text-[var(--c-accent)]" />{new Date(dateStart).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})} – {new Date(dateEnd).toLocaleDateString('en-US',{month:'long',day:'numeric',year:'numeric'})}</span><span className="flex items-center gap-2"><MapPin className="h-4 w-4 text-[var(--c-accent)]" />{fullAddress}</span></div></div>
     <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><Metric label="Program" value={info?.program?.code ?? 'V5RC'} detail={info?.program?.name ?? 'VEX V5 Robotics Competition'} /><Metric label="Season" value={seasonYearLabel(info?.season?.name ?? event.season)} detail={info?.season?.name ?? event.season ?? 'Official season'} /><Metric label="Level class" value={event.levelClass ?? event.class ?? 'Other'} detail={event.eventType ?? 'Official competition'} /><Metric label="Registered teams" value={loading ? '…' : String(teamsList.length)} detail={loading ? 'Loading Event.VEX registrations' : 'Live registration list'} /></div>
@@ -611,6 +616,27 @@ function EventInfoView({ event, goBack, openTeam, openTeamAtEvent }: {event:any;
       {!loading&&!detailError&&tab==='teams'&&<article className="overflow-hidden border border-white/10 bg-[var(--c-surface)]"><SectionTitle eyebrow="Live registration" title="Teams attending" />{teamsList.length ? <div className="max-h-[650px] overflow-auto"><Table><TableHeader><TableRow className="border-white/10 hover:bg-transparent"><TableHead className="px-5">Team</TableHead><TableHead>Organization</TableHead><TableHead>Grade</TableHead><TableHead className="px-5 text-right">Location</TableHead></TableRow></TableHeader><TableBody>{teamsList.map((team:any)=><TableRow key={team.id} tabIndex={0} role="link" onKeyDown={e=>{if(e.key==='Enter')openTeam({...team,seasonId:info?.season?.id,season:info?.season?.name})}} onClick={()=>openTeam({...team,region:[team.location?.region,team.location?.country].filter(Boolean).join(', '),country:team.location?.country,seasonId:info?.season?.id,season:info?.season?.name??event.season})} className="cursor-pointer border-white/[.07] hover:bg-white/[.04]"><TableCell className="px-5"><b>{team.number}</b><small className="ml-2 text-white/50">{team.name}</small></TableCell><TableCell className="text-white/55">{team.organization || '—'}</TableCell><TableCell className="text-white/55">{team.grade || '—'}</TableCell><TableCell className="px-5 text-right text-white/45">{[team.location?.city,team.location?.region,team.location?.country].filter(Boolean).join(', ')}</TableCell></TableRow>)}</TableBody></Table></div> : <Empty text="No registered teams are listed yet." />}</article>}
     </div>
   </section></JumperProvider>;
+}
+
+// The livestream page (components/stream-jumper.tsx), with the event loaded
+// the way the event page loads it: cached, live while matches are played, and
+// the organizer's notes - where the stream link is - merged in when they land.
+function LivestreamView({ event, target, goBack, backLabel }: { event:any; target:{matchId?:number;team?:string}|null; goBack:()=>void; backLabel:string }) {
+  const [details,setDetails]=useState<any>(()=>eventDetailCache.get(String(event.id))??null);
+  const [error,setError]=useState('');
+  const [retry,setRetry]=useState(0);
+  useEffect(()=>{
+    let active=true;
+    if(!eventDetailCache.has(String(event.id)))setDetails(null);
+    setError('');
+    cachedJson(eventDetailUrl(event.id),eventDetailCache,String(event.id)).then((data:any)=>{if(active)setDetails(data)}).catch(failure=>{if(active)setError(failure.message)});
+    return()=>{active=false};
+  },[event.id,retry]);
+  useLiveEvent(event.id,details,setDetails,eventDetailCache);
+  useOrganizerNotes(event.id,details,setDetails);
+  if(error)return <section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8"><LoadError message={error} retry={()=>{eventDetailCache.delete(String(event.id));setRetry(value=>value+1)}} /></section>;
+  if(!details)return <section className="mx-auto max-w-[1440px] px-5 py-10 text-sm text-white/55 lg:px-8">Loading the event…</section>;
+  return <LivestreamPage event={event} details={details} initialMatchId={target?.matchId??null} initialTeam={target?.team} goBack={goBack} backLabel={backLabel} />;
 }
 
 function OfficialFallback({href,text,compact=false}:{href:string;text:string;compact?:boolean}) {
@@ -1104,7 +1130,7 @@ function TeamView({ team, goBack, backLabel, openEvent, openTeamAtEvent }: { tea
     </div>:historyError?<div className="mx-auto max-w-[1440px] px-5 py-8 lg:px-8"><div className="border border-rose-400/25 bg-rose-400/[.05] p-6"><p className="text-sm text-rose-200">{historyError}</p><button onClick={()=>{teamHistoryCache.delete(initialCacheKey);setRetry(value=>value+1)}} className="mt-4 border border-white/15 px-4 py-2 text-sm hover:bg-white hover:text-black">Retry</button></div></div>:<div className="mx-auto max-w-[1440px] px-5 py-8 lg:px-8"><Empty text="Loading team history…" /></div>}</section>;
 }
 
-function TeamEventView({ event, team, backLabel, goBack, openEvent, openTeam }: { event:any; team:any; backLabel:string; goBack:()=>void; openEvent:(event:any)=>void; openTeam:(team:any)=>void }) {
+function TeamEventView({ event, team, backLabel, goBack, openEvent, openTeam, openLive }: { event:any; team:any; backLabel:string; goBack:()=>void; openEvent:(event:any)=>void; openTeam:(team:any)=>void; openLive?:(target?:{matchId?:number;team?:string})=>void }) {
   const key=String(event.id);
   const [details,setDetails]=useState<any>(()=>eventDetailCache.get(key)??null);
   const [error,setError]=useState('');
@@ -1181,7 +1207,7 @@ function TeamEventView({ event, team, backLabel, goBack, openEvent, openTeam }: 
     {match.partners.length>0&&<p className="mt-1.5 text-xs text-white/75">{match.played?'Scored with':'With'} {match.partners.map((partner:string)=><button key={partner} onClick={()=>openTeam({number:partner,seasonId:info?.season?.id,season:info?.season?.name})} className="mr-1.5 font-semibold hover:text-[var(--c-accent)]">{partner}</button>)}</p>}
   </li>;
   const stat=(label:string,value:any,title?:string)=>value==null?null:<div key={label} title={title}><p className="text-[10px] font-semibold uppercase tracking-wider text-white/50">{label}</p><p className="mt-1 font-mono text-[15px]">{value}</p></div>;
-  return <JumperProvider eventId={event.id} divisions={details?.divisions??[]} webcast={details?.organizer?.webcast}><section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8">
+  return <JumperProvider eventId={event.id} divisions={details?.divisions??[]} webcast={details?.organizer?.webcast} onWatch={openLive&&((match?:any)=>openLive({matchId:match?Number(match.id):undefined,team:String(team.number??'')}))}><section className="mx-auto max-w-[1440px] px-5 py-10 lg:px-8">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <button onClick={goBack} className="-ml-1 flex min-h-11 items-center gap-2 px-1 text-sm font-bold text-white/50 transition-colors hover:text-white"><ArrowLeft className="h-4 w-4" /> Back to {backLabel}</button>
       {details&&<button onClick={retry} disabled={refreshing} className="border border-white/15 px-3 py-1.5 text-xs text-white/60 hover:text-white disabled:opacity-50">{refreshing?'Refreshing…':'Refresh results'}</button>}
