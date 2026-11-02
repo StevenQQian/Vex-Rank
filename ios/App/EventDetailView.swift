@@ -260,6 +260,7 @@ struct EventDetailView: View {
                 iqMatchSection(division, rulings: rulings)
             } else if let division {
                 matchSection("Qualification", division.qualification, key: "qual-\(division.id)", rulings: rulings)
+                selectionSection(division)
                 matchSection("Elimination", division.elimination, key: "elim-\(division.id)", rulings: rulings)
             }
         case .awards:
@@ -573,6 +574,36 @@ struct EventDetailView: View {
                     matchRow(match, rulings: rulings)
                 }
                 revealButton(total: matches.count, key: key, noun: "matches")
+            }
+            .listRowBackground(theme.surface)
+        }
+    }
+
+    /// Alliance selection, as on OpenScout, between qualification and
+    /// elimination: each captain, the team it selected, and the seed.
+    @ViewBuilder
+    private func selectionSection(_ division: Division) -> some View {
+        let selections = division.allianceSelections.filter { selection in
+            search.isEmpty || [selection.captain, selection.pick].contains { $0.lowercased().contains(search) }
+        }
+        if !selections.isEmpty {
+            Section("Alliance selection") {
+                ForEach(selections) { selection in
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text("#\(selection.seed)")
+                            .font(.system(.caption2, design: .monospaced, weight: .bold))
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .background(theme.accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                            .foregroundStyle(theme.accent)
+                        (Text("Team ") + Text(selection.captain).font(.system(.footnote, design: .monospaced, weight: .bold))
+                         + Text(" selects ").foregroundColor(.secondary)
+                         + Text("Team ") + Text(selection.pick).font(.system(.footnote, design: .monospaced, weight: .bold))
+                         + Text(" as the ").foregroundColor(.secondary)
+                         + Text("\(AllianceSelection.ordinal(selection.seed)) seed alliance"))
+                            .font(.footnote)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
             }
             .listRowBackground(theme.surface)
         }

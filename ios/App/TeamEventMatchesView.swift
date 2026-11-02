@@ -177,7 +177,10 @@ struct TeamEventMatchesView: View {
 
             if tab == .matches, !model.played.isEmpty {
                 Section {
-                    ForEach(model.played) { row($0) }
+                    ForEach(model.played) { match in
+                        if match.id == model.selectionBefore, let selection = model.selection { selectionRow(selection) }
+                        row(match)
+                    }
                 } header: {
                     Text("Played")
                 } footer: {
@@ -195,7 +198,10 @@ struct TeamEventMatchesView: View {
 
             if tab == .matches, !model.upcoming.isEmpty {
                 Section("Scheduled") {
-                    ForEach(model.upcoming) { row($0) }
+                    ForEach(model.upcoming) { match in
+                        if match.id == model.selectionBefore, let selection = model.selection { selectionRow(selection) }
+                        row(match)
+                    }
                 }
                 .listRowBackground(theme.surface)
             }
@@ -380,6 +386,32 @@ struct TeamEventMatchesView: View {
         .padding(.vertical, 2)
     }
 
+    /// Alliance selection, as on OpenScout: between the last qualification
+    /// match and the first elimination match, who picked whom as which seed.
+    private func selectionRow(_ selection: AllianceSelection) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("#\(selection.seed)")
+                .font(.system(.caption2, design: .monospaced, weight: .bold))
+                .padding(.horizontal, 5).padding(.vertical, 1)
+                .background(theme.accent.opacity(0.15), in: RoundedRectangle(cornerRadius: 3))
+                .foregroundStyle(theme.accent)
+            (Text("Team ") + selectionTeam(selection.captain) + Text(" selects ").foregroundColor(.secondary)
+             + Text("Team ") + selectionTeam(selection.pick) + Text(" as the ").foregroundColor(.secondary)
+             + Text("\(AllianceSelection.ordinal(selection.seed)) seed alliance"))
+                .font(.footnote)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func selectionTeam(_ team: String) -> Text {
+        let focused = team.caseInsensitiveCompare(ref.team) == .orderedSame
+        return Text(team)
+            .font(.system(.footnote, design: .monospaced, weight: .bold))
+            .foregroundColor(focused ? theme.accent : .primary)
+            .underline(focused)
+    }
+
     private func allianceCell(_ teams: [String], match: Int, colour: Color, bold: Bool) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             ForEach(teams, id: \.self) { team in
@@ -443,6 +475,10 @@ final class TeamEventMatchesModel {
     private(set) var check: RecordCheck?
     /// Official rulings at the event (DQs, results the standings changed).
     private(set) var rulings = OfficialRulings()
+    /// The team's alliance selection, and the match it is shown before: its
+    /// first elimination match.
+    private(set) var selection: AllianceSelection?
+    private(set) var selectionBefore: Int?
     private(set) var strength: StrengthProfile?
     private(set) var error: String?
     /// VEX IQ: read from the event, not the selected program, so a link into
@@ -475,6 +511,10 @@ final class TeamEventMatchesModel {
             let all = detail.matches(for: ref.team)
             played = all.filter(\.isPlayed)
             upcoming = all.filter { !$0.isPlayed }
+            selection = detail.allianceSelections.first { $0.includes(ref.team) }
+            // After the last qualifier, so practice matches before it do not count.
+            let afterQualifying = all.lastIndex(where: \.isQualification).map { $0 + 1 } ?? 0
+            selectionBefore = all[afterQualifying...].first { !$0.isQualification }?.id
             record = TeamEventRecord(matches: all)
             standing = detail.standing(for: ref.team)
             momentum = TeamMomentum.points(from: all)
