@@ -570,20 +570,20 @@ struct EventDetailView: View {
                         .compactMap { $0 }.joined(separator: " \u{00B7} "))
                     .font(.caption2).foregroundStyle(.secondary)
             }
-            // After OpenScout: red alliance, the two scores, blue alliance.
+            // After OpenScout: red alliance, the two scores side by side, blue
+            // alliance; the winner's score filled, a DQ badge on the team.
             HStack(spacing: 6) {
-                allianceCell(match.red, colour: .allianceRed, won: match.winner == "red")
-                VStack(spacing: 3) {
+                allianceCell(match.red, match: match.id, rulings: rulings, colour: .allianceRed, won: match.winner == "red")
+                HStack(spacing: 4) {
                     if match.isPlayed {
-                        scoreChip(match.red?.score, colour: .allianceRed, dim: match.winner == "blue")
-                        scoreChip(match.blue?.score, colour: .allianceBlue, dim: match.winner == "red")
+                        scoreChip(match.red?.score, colour: .allianceRed, won: match.winner == "red")
+                        scoreChip(match.blue?.score, colour: .allianceBlue, won: match.winner == "blue")
                     } else {
-                        Text("\u{2014}").font(.caption).foregroundStyle(.subtle)
+                        Text("\u{2014}").font(.caption).foregroundStyle(.subtle).frame(minWidth: 60)
                     }
                 }
-                allianceCell(match.blue, colour: .allianceBlue, won: match.winner == "blue")
+                allianceCell(match.blue, match: match.id, rulings: rulings, colour: .allianceBlue, won: match.winner == "blue")
             }
-            rulingTags(match, teams: (match.red?.numbers ?? []) + (match.blue?.numbers ?? []), rulings: rulings)
         }
         .padding(.vertical, 2)
     }
@@ -598,7 +598,7 @@ struct EventDetailView: View {
                 ForEach(marked, id: \.0) { team, ruling in
                     Text("\(team) · \(ruling.label)")
                         .font(.caption2.weight(.bold))
-                        .foregroundStyle(ruling == .ruledWin ? Color.win : Color.loss)
+                        .foregroundStyle(Color.orange)
                         .accessibilityHint(ruling.explanation)
                 }
             }
@@ -607,12 +607,21 @@ struct EventDetailView: View {
 
     /// An alliance's teams in a tinted cell, bold when it won. Plain text, not
     /// links: four disclosures per row read as clutter; standings lead to teams.
-    private func allianceCell(_ alliance: MatchAlliance?, colour: Color, won: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private func allianceCell(_ alliance: MatchAlliance?, match: Int, rulings: OfficialRulings, colour: Color, won: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
             ForEach(alliance?.numbers ?? [], id: \.self) { number in
-                Text(number)
-                    .font(.system(.footnote, design: .monospaced, weight: won ? .bold : .regular))
-                    .foregroundStyle(colour)
+                HStack(spacing: 4) {
+                    Text(number)
+                        .font(.system(.footnote, design: .monospaced, weight: won ? .bold : .regular))
+                        .foregroundStyle(colour)
+                    if rulings.ruling(match: match, team: number) == .dq {
+                        Text("DQ").font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.28), in: RoundedRectangle(cornerRadius: 3))
+                            .foregroundStyle(Color.orange)
+                            .accessibilityLabel("Disqualified")
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -620,14 +629,13 @@ struct EventDetailView: View {
         .background(colour.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
     }
 
-    private func scoreChip(_ score: Int?, colour: Color, dim: Bool) -> some View {
+    private func scoreChip(_ score: Int?, colour: Color, won: Bool) -> some View {
         Text(score.map(String.init) ?? "\u{2014}")
             .font(.system(.footnote, design: .monospaced, weight: .semibold)).monospacedDigit()
-            .foregroundStyle(.white)
-            .frame(minWidth: 38)
-            .padding(.vertical, 2)
-            .background(colour.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
-            .opacity(dim ? 0.4 : 1)
+            .foregroundStyle(won ? .white : colour)
+            .frame(minWidth: 30)
+            .padding(.horizontal, 3).padding(.vertical, 2)
+            .background(won ? colour : .clear, in: RoundedRectangle(cornerRadius: 3))
     }
 
     private var search: String {

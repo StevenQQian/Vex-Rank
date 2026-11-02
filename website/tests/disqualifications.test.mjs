@@ -6,40 +6,69 @@ const side = (color, score, ...teams) => ({ color, score, teams: teams.map(name 
 const qual = (id, red, blue) => ({ id, round: 2, name: `Qualifier #${id}`, alliances: [red, blue] });
 const rank = (name, wins, losses, ties = 0) => ({ team: { name }, wins, losses, ties });
 
-test('VEX IQ: a station at 0 beside a scoring partner is a DQ', () => {
-  const division = { matches: [qual(1, side('red', 144, '19970A'), side('blue', 0, '5216A')), qual(2, side('red', 0, '1A'), side('blue', 0, '2A'))], rankings: [] };
+test('VEX IQ: the lower of two differing stations is the DQ (OpenScout\'s rule)', () => {
+  const division = { matches: [qual(1, side('red', 144, '19970A'), side('blue', 0, '5216A')), qual(2, side('red', 0, '1A'), side('blue', 0, '2A')), qual(3, side('red', 90, '7A'), side('blue', 85, '8A'))], rankings: [] };
   const rulings = officialRulings(division, { iq: true });
   assert.equal(rulingFor(rulings, { id: 1 }, '5216A'), 'dq');
   assert.equal(rulingFor(rulings, { id: 1 }, '19970A'), null);
   assert.equal(rulings.byMatch.has(2), false, 'an unplayed 0-0 is not a DQ');
-  // Any mismatch marks the lower station, as OpenScout does.
-  const partial = officialRulings({ matches: [qual(3, side('red', 90, '7A'), side('blue', 85, '8A'))], rankings: [] }, { iq: true });
-  assert.equal(rulingFor(partial, { id: 3 }, '8A'), 'dq');
+  assert.equal(rulingFor(rulings, { id: 3 }, '8A'), 'dq');
 });
 
-test('V5: when every win on score was overturned, those matches are ruled losses', () => {
-  // 3388G won #5 on score but is 0-2 officially.
+test('V5: the DQ team takes the loss, the opponents get the win, the partner keeps its result', () => {
+  // Caution Tape Q49 in miniature: 252W + 16610A beat 252H + 10909N on score,
+  // 252W was disqualified. Officially 252W lost, 16610A still won, 252H and
+  // 10909N were given the win.
   const division = {
-    matches: [qual(5, side('red', 27, '45519S', '45519B'), side('blue', 30, '3388G', '2088Y')), qual(7, side('red', 0, '45519J', '3388G'), side('blue', 22, '14353S', '45519Z'))],
-    rankings: [rank('3388G', 0, 2)],
+    matches: [qual(49, side('red', 28, '252H', '10909N'), side('blue', 160, '252W', '16610A'))],
+    rankings: [rank('252W', 0, 1), rank('16610A', 1, 0), rank('252H', 1, 0), rank('10909N', 1, 0)],
   };
   const rulings = officialRulings(division);
-  assert.equal(rulingFor(rulings, { id: 5 }, '3388G'), 'ruled-loss');
-  assert.equal(rulingFor(rulings, { id: 7 }, '3388G'), null);
+  assert.equal(rulingFor(rulings, { id: 49 }, '252W'), 'dq');
+  assert.equal(rulingFor(rulings, { id: 49 }, '16610A'), null, 'the partner was not disqualified');
+  assert.deepEqual(rulings.unresolved, []);
 });
 
-test('V5: when every non-win became a win, those matches are ruled wins', () => {
-  const division = { matches: [qual(89, side('red', 83, '2145V', '32K'), side('blue', 93, '2567U', '2567M'))], rankings: [rank('32K', 1, 0)] };
-  assert.equal(rulingFor(officialRulings(division), { id: 89 }, '32K'), 'ruled-win');
-});
-
-test('V5: a gap that could sit in more than one match marks nothing and is reported', () => {
-  // Two wins on score, one official: which one was overturned is unknown.
+test('V5: both partners disqualified', () => {
   const division = {
-    matches: [qual(1, side('red', 50, 'A1', 'B1'), side('blue', 10, 'C1', 'D1')), qual(2, side('red', 60, 'A1', 'E1'), side('blue', 20, 'F1', 'G1'))],
-    rankings: [rank('A1', 1, 1)],
+    matches: [qual(89, side('red', 83, '2145V', '32K'), side('blue', 93, '2567U', '2567M'))],
+    rankings: [rank('2567U', 0, 1), rank('2567M', 0, 1), rank('2145V', 1, 0), rank('32K', 1, 0)],
   };
   const rulings = officialRulings(division);
-  assert.equal(rulings.byMatch.size, 0);
-  assert.deepEqual(rulings.unresolved, ['A1']);
+  assert.equal(rulingFor(rulings, { id: 89 }, '2567U'), 'dq');
+  assert.equal(rulingFor(rulings, { id: 89 }, '2567M'), 'dq');
+});
+
+test('V5: a DQ and a win from an opponent\'s DQ can cancel out in one team\'s record', () => {
+  // 2551A at 66020: disqualified in Q1, then given Q24 by 210B's DQ - its
+  // record matches its scores, yet it was disqualified.
+  const division = {
+    matches: [
+      qual(1, side('red', 26, '3300Z', '2088V'), side('blue', 51, '2551A', '45519J')),
+      qual(24, side('red', 60, '14353S', '210B'), side('blue', 28, '3388H', '2551A')),
+    ],
+    rankings: [rank('2551A', 1, 1), rank('45519J', 1, 0), rank('3300Z', 1, 0), rank('2088V', 1, 0), rank('14353S', 1, 0), rank('210B', 0, 1), rank('3388H', 1, 0)],
+  };
+  const rulings = officialRulings(division);
+  assert.equal(rulingFor(rulings, { id: 1 }, '2551A'), 'dq');
+  assert.equal(rulingFor(rulings, { id: 24 }, '210B'), 'dq');
+});
+
+test('V5: a team whose official match count differs is left out, not allowed to block the rest', () => {
+  const division = {
+    matches: [qual(49, side('red', 28, '252H', '10909N'), side('blue', 160, '252W', '16610A')), qual(50, side('red', 40, '9651A', 'X1'), side('blue', 10, 'Y1', 'Z1'))],
+    // 9651A: one win fewer and no extra loss - a match that does not count for it.
+    rankings: [rank('252W', 0, 1), rank('16610A', 1, 0), rank('252H', 1, 0), rank('10909N', 1, 0), rank('9651A', 0, 0), rank('X1', 1, 0), rank('Y1', 0, 1), rank('Z1', 0, 1)],
+  };
+  assert.equal(rulingFor(officialRulings(division), { id: 49 }, '252W'), 'dq');
+});
+
+test('V5: when either of two matches could hold the DQ, neither is marked', () => {
+  // A1 won two matches on score with the same opponents' records unchanged...
+  // only one win was overturned, and nothing says which.
+  const division = {
+    matches: [qual(1, side('red', 50, 'A1', 'B1'), side('blue', 10, 'C1', 'D1')), qual(2, side('red', 60, 'A1', 'B1'), side('blue', 20, 'C1', 'D1'))],
+    rankings: [rank('A1', 1, 1), rank('B1', 2, 0), rank('C1', 1, 1), rank('D1', 1, 1)],
+  };
+  assert.equal(officialRulings(division).byMatch.size, 0);
 });

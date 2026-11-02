@@ -25,24 +25,37 @@ final class RulingsTests: XCTestCase {
         XCTAssertEqual(partial.ruling(match: 3, team: "8A"), .dq, "any mismatch marks the lower station, as OpenScout does")
     }
 
-    func testEveryWinOverturnedIsARuledLoss() throws {
-        let d = try division([(5, side("red", 27, "45519S", "45519B"), side("blue", 30, "3388G", "2088Y")),
-                              (7, side("red", 0, "45519J", "3388G"), side("blue", 22, "14353S", "45519Z"))],
-                             rankings: [("3388G", 0, 2, 0)])
-        XCTAssertEqual(d.officialRulings(iq: false).ruling(match: 5, team: "3388G"), .ruledLoss)
-    }
-
-    func testEveryNonWinBecomingAWinIsARuledWin() throws {
-        let d = try division([(89, side("red", 83, "2145V", "32K"), side("blue", 93, "2567U", "2567M"))], rankings: [("32K", 1, 0, 0)])
-        XCTAssertEqual(d.officialRulings(iq: false).ruling(match: 89, team: "32K"), .ruledWin)
-    }
-
-    func testAnAmbiguousGapMarksNothing() throws {
-        let d = try division([(1, side("red", 50, "A1", "B1"), side("blue", 10, "C1", "D1")),
-                              (2, side("red", 60, "A1", "E1"), side("blue", 20, "F1", "G1"))],
-                             rankings: [("A1", 1, 1, 0)])
+    func testV5DQTeamLosesOpponentsWinPartnerKeepsResult() throws {
+        // Caution Tape Q49 in miniature.
+        let d = try division([(49, side("red", 28, "252H", "10909N"), side("blue", 160, "252W", "16610A"))],
+                             rankings: [("252W", 0, 1, 0), ("16610A", 1, 0, 0), ("252H", 1, 0, 0), ("10909N", 1, 0, 0)])
         let rulings = d.officialRulings(iq: false)
-        XCTAssertTrue(rulings.byMatch.isEmpty)
-        XCTAssertEqual(rulings.unresolved, ["A1"])
+        XCTAssertEqual(rulings.ruling(match: 49, team: "252W"), .dq)
+        XCTAssertNil(rulings.ruling(match: 49, team: "16610A"))
+    }
+
+    func testV5BothPartnersDisqualified() throws {
+        let d = try division([(89, side("red", 83, "2145V", "32K"), side("blue", 93, "2567U", "2567M"))],
+                             rankings: [("2567U", 0, 1, 0), ("2567M", 0, 1, 0), ("2145V", 1, 0, 0), ("32K", 1, 0, 0)])
+        let rulings = d.officialRulings(iq: false)
+        XCTAssertEqual(rulings.ruling(match: 89, team: "2567U"), .dq)
+        XCTAssertEqual(rulings.ruling(match: 89, team: "2567M"), .dq)
+    }
+
+    func testV5ADQAndAGivenWinCanCancelOut() throws {
+        let d = try division([(1, side("red", 26, "3300Z", "2088V"), side("blue", 51, "2551A", "45519J")),
+                              (24, side("red", 60, "14353S", "210B"), side("blue", 28, "3388H", "2551A"))],
+                             rankings: [("2551A", 1, 1, 0), ("45519J", 1, 0, 0), ("3300Z", 1, 0, 0), ("2088V", 1, 0, 0),
+                                        ("14353S", 1, 0, 0), ("210B", 0, 1, 0), ("3388H", 1, 0, 0)])
+        let rulings = d.officialRulings(iq: false)
+        XCTAssertEqual(rulings.ruling(match: 1, team: "2551A"), .dq)
+        XCTAssertEqual(rulings.ruling(match: 24, team: "210B"), .dq)
+    }
+
+    func testV5AmbiguousGapMarksNothing() throws {
+        let d = try division([(1, side("red", 50, "A1", "B1"), side("blue", 10, "C1", "D1")),
+                              (2, side("red", 60, "A1", "B1"), side("blue", 20, "C1", "D1"))],
+                             rankings: [("A1", 1, 1, 0), ("B1", 2, 0, 0), ("C1", 1, 1, 0), ("D1", 1, 1, 0)])
+        XCTAssertTrue(d.officialRulings(iq: false).byMatch.isEmpty)
     }
 }

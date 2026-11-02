@@ -335,63 +335,68 @@ struct TeamEventMatchesView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
+    /// After OpenScout: this team's W or L, the match, then red alliance, the
+    /// two scores and blue alliance side by side. The winner's score is filled,
+    /// the loser's plain, outlined when it is this team's loss; a disqualified
+    /// team carries an amber DQ badge (and a DQ is a loss).
     private func row(_ match: TeamMatch) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .firstTextBaseline) {
+        let isRed = match.colour == "red"
+        let mine = [ref.team] + match.partners
+        let red = isRed ? mine : match.opponents
+        let blue = isRed ? match.opponents : mine
+        let redScore = isRed ? match.scoreFor : match.scoreAgainst
+        let blueScore = isRed ? match.scoreAgainst : match.scoreFor
+        let winner: String? = match.isPlayed ? (match.outcome == .won ? match.colour : match.outcome == .lost ? (isRed ? "blue" : "red") : nil) : nil
+        let disqualified = model.rulings.ruling(match: match.id, team: ref.team) == .dq
+        let result: TeamMatch.Outcome = disqualified ? .lost : match.outcome
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                if match.isPlayed {
+                    Text(result == .won ? "W" : result == .lost ? "L" : "T")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(outcomeColour(result))
+                        .frame(width: 12, alignment: .leading)
+                        .accessibilityLabel(outcomeLabel(result))
+                }
                 Text(match.name).font(.subheadline.weight(.medium))
                 Spacer(minLength: 8)
-                if match.isPlayed {
-                    // The official result where the standings changed it
-                    // (a ruling found with certainty), otherwise the score's.
-                    let ruling = model.rulings.ruling(match: match.id, team: ref.team)
-                    let result: TeamMatch.Outcome = ruling == .ruledLoss ? .lost : ruling == .ruledWin ? .won : match.outcome
-                    Text(ruling?.label ?? outcomeLabel(match.outcome))
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(outcomeColour(result))
-                        .accessibilityHint(ruling?.explanation ?? "")
-                } else if let time = match.scheduled {
-                    Text(time.formatted(date: .omitted, time: .shortened))
-                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
-                }
+                Text([match.scheduled.map { $0.formatted(date: .omitted, time: .shortened) }, match.field]
+                        .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " \u{00B7} "))
+                    .font(.caption2).foregroundStyle(.secondary).monospacedDigit()
             }
-
-            // After OpenScout: red alliance, the two scores, blue alliance;
-            // the winner's side bold, the loser's score dimmed, and this team
-            // marked in its own row.
-            let isRed = match.colour == "red"
-            let mine = [ref.team] + match.partners
-            let red = isRed ? mine : match.opponents
-            let blue = isRed ? match.opponents : mine
-            let redScore = isRed ? match.scoreFor : match.scoreAgainst
-            let blueScore = isRed ? match.scoreAgainst : match.scoreFor
-            let winner: String? = match.isPlayed ? (match.outcome == .won ? match.colour : match.outcome == .lost ? (isRed ? "blue" : "red") : nil) : nil
             HStack(spacing: 6) {
-                allianceCell(red, colour: .allianceRed, bold: winner == "red")
-                VStack(spacing: 3) {
+                allianceCell(red, match: match.id, colour: .allianceRed, bold: winner == "red")
+                HStack(spacing: 4) {
                     if match.isPlayed {
-                        scoreChip(redScore, colour: .allianceRed, dim: winner == "blue")
-                        scoreChip(blueScore, colour: .allianceBlue, dim: winner == "red")
+                        scoreChip(redScore, colour: .allianceRed, won: winner == "red", ownLoss: isRed && winner == "blue")
+                        scoreChip(blueScore, colour: .allianceBlue, won: winner == "blue", ownLoss: !isRed && winner == "red")
                     } else {
-                        Text("\u{2014}").font(.caption).foregroundStyle(.subtle)
+                        Text("\u{2014}").font(.caption).foregroundStyle(.subtle).frame(minWidth: 60)
                     }
                 }
-                allianceCell(blue, colour: .allianceBlue, bold: winner == "blue")
-            }
-            if let field = match.field, !field.isEmpty {
-                Text(field).font(.caption2).foregroundStyle(.subtle)
+                allianceCell(blue, match: match.id, colour: .allianceBlue, bold: winner == "blue")
             }
         }
         .padding(.vertical, 2)
     }
 
-    private func allianceCell(_ teams: [String], colour: Color, bold: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    private func allianceCell(_ teams: [String], match: Int, colour: Color, bold: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
             ForEach(teams, id: \.self) { team in
                 let focused = team.caseInsensitiveCompare(ref.team) == .orderedSame
-                Text(team)
-                    .font(.system(.footnote, design: .monospaced, weight: bold || focused ? .bold : .regular))
-                    .foregroundStyle(focused ? theme.accent : colour)
-                    .underline(focused)
+                HStack(spacing: 4) {
+                    Text(team)
+                        .font(.system(.footnote, design: .monospaced, weight: bold || focused ? .bold : .regular))
+                        .foregroundStyle(focused ? theme.accent : colour)
+                        .underline(focused)
+                    if model.rulings.ruling(match: match, team: team) == .dq {
+                        Text("DQ").font(.system(size: 9, weight: .bold))
+                            .padding(.horizontal, 4).padding(.vertical, 1)
+                            .background(Color.orange.opacity(0.28), in: RoundedRectangle(cornerRadius: 3))
+                            .foregroundStyle(Color.orange)
+                            .accessibilityLabel("Disqualified")
+                    }
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -399,14 +404,14 @@ struct TeamEventMatchesView: View {
         .background(colour.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
     }
 
-    private func scoreChip(_ score: Int?, colour: Color, dim: Bool) -> some View {
+    private func scoreChip(_ score: Int?, colour: Color, won: Bool, ownLoss: Bool) -> some View {
         Text(score.map(String.init) ?? "\u{2014}")
             .font(.system(.footnote, design: .monospaced, weight: .semibold)).monospacedDigit()
-            .foregroundStyle(.white)
-            .frame(minWidth: 38)
-            .padding(.vertical, 2)
-            .background(colour.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
-            .opacity(dim ? 0.4 : 1)
+            .foregroundStyle(won ? .white : colour)
+            .frame(minWidth: 30)
+            .padding(.horizontal, 3).padding(.vertical, 2)
+            .background(won ? colour : .clear, in: RoundedRectangle(cornerRadius: 3))
+            .overlay(RoundedRectangle(cornerRadius: 3).stroke(ownLoss ? colour : .clear, lineWidth: 1))
     }
 
     private func outcomeLabel(_ outcome: TeamMatch.Outcome) -> String {
