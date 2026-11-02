@@ -221,6 +221,27 @@ public actor VEXRankAPI {
         return try await get("/api/events/\(encoded)?results=v49", fresh: fresh)
     }
 
+    /// The jumper's shared streams for an event (website/cloudflare/streams.ts);
+    /// `videos` are ones the event's webcast notes list, timed where YouTube allows.
+    public func streams(event: Int, videos: [String]) async throws -> SharedStreamsResponse {
+        var path = "/api/streams?event=\(event)"
+        if !videos.isEmpty { path += "&videos=\(videos.joined(separator: ","))" }
+        return try await get(path, attempts: 1, fresh: true)
+    }
+
+    /// Adds a YouTube link to an event, or saves a sync point - "this match
+    /// starts here" - for everyone.
+    public func postStream(_ body: [String: Any]) async throws -> SharedStreamsResponse {
+        guard let url = URL(string: "/api/streams", relativeTo: baseURL) else { throw VEXRankError.unreachable }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await session.data(for: request)
+        guard (200..<300).contains((response as? HTTPURLResponse)?.statusCode ?? 0) else { throw VEXRankError.unreachable }
+        return try decoder.decode(SharedStreamsResponse.self, from: data)
+    }
+
     public func teamProfile(number: String, season: Int? = nil) async throws -> TeamProfileResponse {
         let encoded = number.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? number
         var path = "/api/teams/\(encoded)?profile=v8"

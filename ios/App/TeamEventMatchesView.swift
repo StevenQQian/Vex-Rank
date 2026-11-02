@@ -8,6 +8,8 @@ struct TeamEventMatchesView: View {
     let ref: TeamEventRef
     @Environment(\.vexTheme) private var theme
     @State private var model = TeamEventMatchesModel()
+    /// The livestream and its jumps to matches (StreamJumperView.swift).
+    @State private var jumper = JumperModel()
     /// Matches, or the stats drawn from them (strengths, momentum).
     @State private var tab: Tab = .matches
 
@@ -182,7 +184,11 @@ struct TeamEventMatchesView: View {
                         row(match)
                     }
                 } header: {
-                    Text("Played")
+                    HStack {
+                        Text("Played")
+                        Spacer()
+                        WatchButton(jumper: jumper).textCase(nil)
+                    }
                 } footer: {
                     if let check = model.check, !check.agrees {
                         // Says why the two disagree instead of letting the
@@ -226,6 +232,12 @@ struct TeamEventMatchesView: View {
         .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .refreshable { await model.load(ref, force: true) }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if jumper.isOpen { JumperPanel(jumper: jumper) }
+        }
+        .task(id: model.detail?.divisions.flatMap { $0.matches ?? [] }.compactMap(\.started).count) {
+            if let detail = model.detail { await jumper.configure(detail) }
+        }
         .background(theme.page)
         .navigationTitle("\(ref.team) · matches")
         .navigationBarTitleDisplayMode(.inline)
@@ -289,6 +301,7 @@ struct TeamEventMatchesView: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
                 Text(match.name).font(.subheadline.weight(.medium))
+                if match.isPlayed { JumpButton(jumper: jumper, matchId: match.id, name: match.name) }
                 Spacer(minLength: 8)
                 if let score = match.score {
                     if model.rulings.ruling(match: match.id, team: ref.team) == .dq {
@@ -475,6 +488,8 @@ final class TeamEventMatchesModel {
     private(set) var check: RecordCheck?
     /// Official rulings at the event (DQs, results the standings changed).
     private(set) var rulings = OfficialRulings()
+    /// The event as loaded, for the livestream jumper.
+    private(set) var detail: EventDetailResponse?
     /// The team's alliance selection, and the match it is shown before: its
     /// first elimination match.
     private(set) var selection: AllianceSelection?
@@ -496,6 +511,7 @@ final class TeamEventMatchesModel {
         do {
             let detail = try await api.eventDetail(id: ref.event.id, fresh: force)
             rulings = detail.officialRulings
+            self.detail = detail
             if detail.isIQ {
                 let teamwork = detail.iqMatches(for: ref.team)
                 isIQ = true

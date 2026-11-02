@@ -14,6 +14,8 @@ struct EventDetailView: View {
     let event: EventRef
     @Environment(\.vexTheme) private var theme
     @State private var model = EventDetailModel()
+    /// The livestream and its jumps to matches (StreamJumperView.swift).
+    @State private var jumper = JumperModel()
     /// `-section Bracket` opens straight to a section, since the chips cannot
     /// be tapped without a touch. A State initial value, not a later
     /// assignment, for the same reason the query and sort are.
@@ -83,6 +85,7 @@ struct EventDetailView: View {
 
                 controls(tabs: tabs, selected: selected, divisions: divisions, division: division, isIQ: detail.isIQ)
                 Divider().overlay(Color.hairline)
+                if jumper.isOpen { JumperPanel(jumper: jumper) }
                 list(detail, tab: selected, division: division)
             } else {
                 list(nil, tab: nil, division: nil)
@@ -94,6 +97,9 @@ struct EventDetailView: View {
         // nothing they could not see in the card below it.
         .navigationTitle(event.name)
         .navigationBarTitleDisplayMode(.inline)
+        .task(id: model.detail?.divisions.flatMap { $0.matches ?? [] }.compactMap(\.started).count) {
+            if let detail = model.detail { await jumper.configure(detail) }
+        }
         .task {
             await model.load(id: event.id)
             // While matches are still to be played, keep it current without
@@ -569,11 +575,17 @@ struct EventDetailView: View {
                 || self.matches(match.name)
         }
         if !matches.isEmpty {
-            Section(title) {
+            Section {
                 ForEach(visible(matches, key: key)) { match in
                     matchRow(match, rulings: rulings)
                 }
                 revealButton(total: matches.count, key: key, noun: "matches")
+            } header: {
+                HStack {
+                    Text(title)
+                    Spacer()
+                    if title == "Qualification" { WatchButton(jumper: jumper).textCase(nil) }
+                }
             }
             .listRowBackground(theme.surface)
         }
@@ -613,6 +625,7 @@ struct EventDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text(match.name ?? "Match").font(.subheadline.weight(.medium))
+                if match.isPlayed { JumpButton(jumper: jumper, matchId: match.id, name: match.name ?? "Match") }
                 Spacer()
                 Text([match.scheduledDate.map { $0.formatted(date: .omitted, time: .shortened) }, match.field]
                         .compactMap { $0 }.joined(separator: " \u{00B7} "))

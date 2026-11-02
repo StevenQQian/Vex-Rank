@@ -6,6 +6,12 @@ public struct EventDetailResponse: Codable, Sendable {
     public let divisions: [Division]
     public let awards: [EventAward]
     public let skills: [EventSkill]
+    /// The organizer's notes from the event page - the webcast link among them.
+    public let organizer: EventOrganizer?
+}
+
+public struct EventOrganizer: Codable, Sendable, Hashable {
+    public let webcast: String?
 }
 
 public struct EventDetail: Codable, Sendable {
@@ -93,6 +99,9 @@ public struct DivisionMatch: Codable, Sendable, Identifiable, Hashable {
     public let matchnum: Int?
     public let field: String?
     public let scheduled: String?
+    /// When the match was actually started - events run late, so this, not
+    /// `scheduled`, is what places a match on the livestream.
+    public let started: String?
     public let alliances: [MatchAlliance]?
 
     /// Whether the match has been played.
