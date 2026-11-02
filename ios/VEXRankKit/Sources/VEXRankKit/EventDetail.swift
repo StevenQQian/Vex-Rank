@@ -155,7 +155,9 @@ extension Division {
     public var elimination: [DivisionMatch] {
         (matches ?? [])
             .filter { match in
-                guard let round = match.round, round >= 3 else { return false }
+                // V5 elimination rounds only: VEX IQ finals (round 15) are a
+                // ranking by shared score, not a bracket - see `iqFinals`.
+                guard let round = match.round, (3...6).contains(round) else { return false }
                 let name = match.name ?? ""
                 return !name.localizedCaseInsensitiveContains("qual")
                     && !name.localizedCaseInsensitiveContains("practice")
@@ -310,6 +312,7 @@ extension TeamEvent {
 public enum EventSection: String, CaseIterable, Sendable, Identifiable {
     case rankings = "Rankings"
     case bracket = "Bracket"
+    case finals = "Finals"
     case matches = "Matches"
     case awards = "Awards"
     case skills = "Skills"
@@ -318,7 +321,7 @@ public enum EventSection: String, CaseIterable, Sendable, Identifiable {
     public var id: String { rawValue }
 
     /// Whether choosing a division changes what this section shows.
-    public var isPerDivision: Bool { self == .rankings || self == .bracket || self == .matches }
+    public var isPerDivision: Bool { self == .rankings || self == .bracket || self == .finals || self == .matches }
 }
 
 extension EventDetailResponse {
@@ -331,6 +334,7 @@ extension EventDetailResponse {
         switch section {
         case .rankings: return divisions.filter { !$0.rankings.isEmpty }
         case .bracket: return divisions.filter { !$0.elimination.isEmpty }
+        case .finals: return divisions.filter { !$0.iqFinals.isEmpty }
         case .matches: return divisions.filter { !($0.matches ?? []).isEmpty }
         default: return []
         }
@@ -341,7 +345,7 @@ extension EventDetailResponse {
     public var availableSections: [EventSection] {
         EventSection.allCases.filter { section in
             switch section {
-            case .rankings, .bracket, .matches: return !divisions(for: section).isEmpty
+            case .rankings, .bracket, .finals, .matches: return !divisions(for: section).isEmpty
             // An event in progress already lists every award it will give
             // out, all of them without a winner. Offering that as a section
             // reads as results when it is only a list of categories.
