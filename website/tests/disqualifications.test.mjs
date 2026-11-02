@@ -12,6 +12,9 @@ test('VEX IQ: a station at 0 beside a scoring partner is a DQ', () => {
   assert.equal(rulingFor(rulings, { id: 1 }, '5216A'), 'dq');
   assert.equal(rulingFor(rulings, { id: 1 }, '19970A'), null);
   assert.equal(rulings.byMatch.has(2), false, 'an unplayed 0-0 is not a DQ');
+  // Any mismatch marks the lower station, as OpenScout does.
+  const partial = officialRulings({ matches: [qual(3, side('red', 90, '7A'), side('blue', 85, '8A'))], rankings: [] }, { iq: true });
+  assert.equal(rulingFor(partial, { id: 3 }, '8A'), 'dq');
 });
 
 test('V5: when every win on score was overturned, those matches are ruled losses', () => {

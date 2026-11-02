@@ -563,15 +563,25 @@ struct EventDetailView: View {
 
     private func matchRow(_ match: DivisionMatch, rulings: OfficialRulings) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            HStack(alignment: .firstTextBaseline) {
                 Text(match.name ?? "Match").font(.subheadline.weight(.medium))
                 Spacer()
-                Text(match.isPlayed ? (match.field ?? "Final") : "Not played")
+                Text([match.scheduledDate.map { $0.formatted(date: .omitted, time: .shortened) }, match.field]
+                        .compactMap { $0 }.joined(separator: " \u{00B7} "))
                     .font(.caption2).foregroundStyle(.secondary)
             }
-            HStack(alignment: .top, spacing: 12) {
-                alliance(match.red, colour: .allianceRed, won: match.winner == "red", played: match.isPlayed)
-                alliance(match.blue, colour: .allianceBlue, won: match.winner == "blue", played: match.isPlayed)
+            // After OpenScout: red alliance, the two scores, blue alliance.
+            HStack(spacing: 6) {
+                allianceCell(match.red, colour: .allianceRed, won: match.winner == "red")
+                VStack(spacing: 3) {
+                    if match.isPlayed {
+                        scoreChip(match.red?.score, colour: .allianceRed, dim: match.winner == "blue")
+                        scoreChip(match.blue?.score, colour: .allianceBlue, dim: match.winner == "red")
+                    } else {
+                        Text("\u{2014}").font(.caption).foregroundStyle(.subtle)
+                    }
+                }
+                allianceCell(match.blue, colour: .allianceBlue, won: match.winner == "blue")
             }
             rulingTags(match, teams: (match.red?.numbers ?? []) + (match.blue?.numbers ?? []), rulings: rulings)
         }
@@ -595,26 +605,29 @@ struct EventDetailView: View {
         }
     }
 
-    private func alliance(_ alliance: MatchAlliance?, colour: Color, won: Bool, played: Bool) -> some View {
-        HStack(spacing: 8) {
-            // The bar says which alliance; the score's weight says who won.
-            // Scores in the alliance colour made every row red and blue and
-            // left the winner to be read from a bold that barely showed.
-            RoundedRectangle(cornerRadius: 1.5).fill(colour).frame(width: 3)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(played ? (alliance?.score.map(String.init) ?? "—") : "—")
-                    .font(.system(.title3, design: .rounded, weight: won ? .bold : .regular))
-                    .foregroundStyle(won ? Color.primary : Color.secondary)
-                    .monospacedDigit()
-                // Plain text, not links: a NavigationLink inside a list row
-                // draws its own disclosure, and four of them per match reads as
-                // clutter. The standings are the way into a team.
-                ForEach(alliance?.numbers ?? [], id: \.self) { number in
-                    Text(number).font(.caption2).foregroundStyle(.secondary)
-                }
+    /// An alliance's teams in a tinted cell, bold when it won. Plain text, not
+    /// links: four disclosures per row read as clutter; standings lead to teams.
+    private func allianceCell(_ alliance: MatchAlliance?, colour: Color, won: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(alliance?.numbers ?? [], id: \.self) { number in
+                Text(number)
+                    .font(.system(.footnote, design: .monospaced, weight: won ? .bold : .regular))
+                    .foregroundStyle(colour)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(colour.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func scoreChip(_ score: Int?, colour: Color, dim: Bool) -> some View {
+        Text(score.map(String.init) ?? "\u{2014}")
+            .font(.system(.footnote, design: .monospaced, weight: .semibold)).monospacedDigit()
+            .foregroundStyle(.white)
+            .frame(minWidth: 38)
+            .padding(.vertical, 2)
+            .background(colour.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
+            .opacity(dim ? 0.4 : 1)
     }
 
     private var search: String {

@@ -137,6 +137,11 @@ extension DivisionMatch {
     public var isQualification: Bool {
         round == 2 || (name?.localizedCaseInsensitiveContains("qual") ?? false)
     }
+
+    /// When the match is scheduled, from the ISO 8601 time the API sends.
+    public var scheduledDate: Date? {
+        scheduled.flatMap { ISO8601DateFormatter().date(from: $0) }
+    }
 }
 
 extension Division {

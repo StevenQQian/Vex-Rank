@@ -8,10 +8,27 @@ struct TeamEventMatchesView: View {
     let ref: TeamEventRef
     @Environment(\.vexTheme) private var theme
     @State private var model = TeamEventMatchesModel()
+    /// Matches, or the stats drawn from them (strengths, momentum).
+    @State private var tab: Tab = .matches
+
+    private enum Tab: String, CaseIterable, Identifiable {
+        case matches = "Matches"
+        case stats = "Stats"
+        var id: String { rawValue }
+    }
 
     var body: some View {
         List {
-            if let record = model.record {
+            if model.record != nil {
+                Picker("Show", selection: $tab) {
+                    ForEach(Tab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .listRowBackground(Color.clear)
+                .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
+            }
+
+            if tab == .matches, let record = model.record {
                 Section {
                     VStack(alignment: .leading, spacing: 14) {
                         // Where they stand, before what they played.
@@ -76,7 +93,7 @@ struct TeamEventMatchesView: View {
                 .listRowBackground(theme.surface)
             }
 
-            if let profile = model.strength {
+            if tab == .stats, let profile = model.strength {
                 Section {
                     VStack(alignment: .leading, spacing: 12) {
                         StrengthHexagon(axes: profile.axes, accent: theme.accent)
@@ -111,7 +128,7 @@ struct TeamEventMatchesView: View {
                 .listRowBackground(theme.surface)
             }
 
-            if model.isIQ, !model.momentum.isEmpty {
+            if tab == .stats, model.isIQ, !model.momentum.isEmpty {
                 Section("Teamwork scores") {
                     VStack(alignment: .leading, spacing: 8) {
                         MomentumChart(points: model.momentum, accent: theme.accent, isScoreSeries: true)
@@ -123,7 +140,7 @@ struct TeamEventMatchesView: View {
                     .padding(.vertical, 4)
                 }
                 .listRowBackground(theme.surface)
-            } else if !model.momentum.isEmpty {
+            } else if tab == .stats, !model.momentum.isEmpty {
                 Section("Tournament momentum") {
                     VStack(alignment: .leading, spacing: 8) {
                         MomentumChart(points: model.momentum, accent: theme.accent)
@@ -139,7 +156,15 @@ struct TeamEventMatchesView: View {
                 .listRowBackground(theme.surface)
             }
 
-            if model.isIQ {
+            if tab == .stats, model.strength == nil, model.momentum.isEmpty, model.record != nil {
+                Section {
+                    Text("Strengths and momentum appear once \(ref.team) has played qualification matches here.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                .listRowBackground(theme.surface)
+            }
+
+            if tab == .matches, model.isIQ {
                 if !model.iqPlayed.isEmpty {
                     Section("Played") { ForEach(model.iqPlayed) { iqRow($0) } }
                         .listRowBackground(theme.surface)
@@ -150,7 +175,7 @@ struct TeamEventMatchesView: View {
                 }
             }
 
-            if !model.played.isEmpty {
+            if tab == .matches, !model.played.isEmpty {
                 Section {
                     ForEach(model.played) { row($0) }
                 } header: {
@@ -168,7 +193,7 @@ struct TeamEventMatchesView: View {
                 .listRowBackground(theme.surface)
             }
 
-            if !model.upcoming.isEmpty {
+            if tab == .matches, !model.upcoming.isEmpty {
                 Section("Scheduled") {
                     ForEach(model.upcoming) { row($0) }
                 }
@@ -330,31 +355,58 @@ struct TeamEventMatchesView: View {
                 }
             }
 
-            HStack(spacing: 8) {
-                AllianceTag(isRed: match.colour == "red")
-
-                if match.isPlayed, let mine = match.scoreFor, let theirs = match.scoreAgainst {
-                    // Their score first: the whole screen is from their side.
-                    Text("\(mine) – \(theirs)")
-                        .font(.system(.subheadline, design: .monospaced, weight: .semibold))
-                        .monospacedDigit()
+            // After OpenScout: red alliance, the two scores, blue alliance;
+            // the winner's side bold, the loser's score dimmed, and this team
+            // marked in its own row.
+            let isRed = match.colour == "red"
+            let mine = [ref.team] + match.partners
+            let red = isRed ? mine : match.opponents
+            let blue = isRed ? match.opponents : mine
+            let redScore = isRed ? match.scoreFor : match.scoreAgainst
+            let blueScore = isRed ? match.scoreAgainst : match.scoreFor
+            let winner: String? = match.isPlayed ? (match.outcome == .won ? match.colour : match.outcome == .lost ? (isRed ? "blue" : "red") : nil) : nil
+            HStack(spacing: 6) {
+                allianceCell(red, colour: .allianceRed, bold: winner == "red")
+                VStack(spacing: 3) {
+                    if match.isPlayed {
+                        scoreChip(redScore, colour: .allianceRed, dim: winner == "blue")
+                        scoreChip(blueScore, colour: .allianceBlue, dim: winner == "red")
+                    } else {
+                        Text("\u{2014}").font(.caption).foregroundStyle(.subtle)
+                    }
                 }
-
-                if let field = match.field, !field.isEmpty {
-                    Text(field).font(.caption).foregroundStyle(.subtle)
-                }
+                allianceCell(blue, colour: .allianceBlue, bold: winner == "blue")
             }
-
-            if !match.partners.isEmpty {
-                Text("with \(match.partners.joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            if !match.opponents.isEmpty {
-                Text("vs \(match.opponents.joined(separator: ", "))")
-                    .font(.caption).foregroundStyle(.secondary)
+            if let field = match.field, !field.isEmpty {
+                Text(field).font(.caption2).foregroundStyle(.subtle)
             }
         }
         .padding(.vertical, 2)
+    }
+
+    private func allianceCell(_ teams: [String], colour: Color, bold: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(teams, id: \.self) { team in
+                let focused = team.caseInsensitiveCompare(ref.team) == .orderedSame
+                Text(team)
+                    .font(.system(.footnote, design: .monospaced, weight: bold || focused ? .bold : .regular))
+                    .foregroundStyle(focused ? theme.accent : colour)
+                    .underline(focused)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(colour.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func scoreChip(_ score: Int?, colour: Color, dim: Bool) -> some View {
+        Text(score.map(String.init) ?? "\u{2014}")
+            .font(.system(.footnote, design: .monospaced, weight: .semibold)).monospacedDigit()
+            .foregroundStyle(.white)
+            .frame(minWidth: 38)
+            .padding(.vertical, 2)
+            .background(colour.opacity(0.85), in: RoundedRectangle(cornerRadius: 3))
+            .opacity(dim ? 0.4 : 1)
     }
 
     private func outcomeLabel(_ outcome: TeamMatch.Outcome) -> String {

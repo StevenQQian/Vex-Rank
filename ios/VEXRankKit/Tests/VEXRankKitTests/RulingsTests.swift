@@ -21,6 +21,8 @@ final class RulingsTests: XCTestCase {
         XCTAssertEqual(rulings.ruling(match: 1, team: "5216A"), .dq)
         XCTAssertNil(rulings.ruling(match: 1, team: "19970A"))
         XCTAssertNil(rulings.byMatch[2], "an unplayed 0-0 is not a DQ")
+        let partial = try division([(3, side("red", 90, "7A"), side("blue", 85, "8A"))], rankings: []).officialRulings(iq: true)
+        XCTAssertEqual(partial.ruling(match: 3, team: "8A"), .dq, "any mismatch marks the lower station, as OpenScout does")
     }
 
     func testEveryWinOverturnedIsARuledLoss() throws {

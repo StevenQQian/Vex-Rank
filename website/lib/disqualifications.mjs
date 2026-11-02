@@ -3,8 +3,9 @@
  * its result changed from what the scores say - only where the data makes it
  * certain. Mirrored by VEXRankKit's Rulings.swift.
  *
- * VEX IQ: explicit. A station at 0 beside a scoring partner is a team-specific
- * zero - that team was disqualified or did not show - so it is a DQ.
+ * VEX IQ: explicit. Both stations of a teamwork match carry the one shared
+ * score; when they differ, the lower station's team was disqualified (or did
+ * not show). The same rule OpenScout uses (iqMatchResult).
  *
  * V5: match records carry no DQ flag, and the official standings are not
  * always reproducible from the scores (on 2026-27 Override results some teams
@@ -30,9 +31,9 @@ export function officialRulings(division, { iq = false } = {}) {
 
   if (iq) {
     for (const match of played) {
-      const scores = match.alliances.map(alliance => Number(alliance.score));
-      if (!scores.some(score => score > 0)) continue;
-      for (const alliance of match.alliances) if (Number(alliance.score) === 0) for (const team of allianceNumbers(alliance)) add(match.id, team, 'dq');
+      const [a, b] = match.alliances.map(alliance => Number(alliance.score));
+      if (!Number.isFinite(a) || !Number.isFinite(b) || a === b) continue;
+      for (const team of allianceNumbers(match.alliances[a < b ? 0 : 1])) add(match.id, team, 'dq');
     }
     return { byMatch, unresolved: [] };
   }

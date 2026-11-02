@@ -3,8 +3,9 @@ import Foundation
 /// An official ruling on one team in one qualification match: its result
 /// changed from what the scores say. Mirrors website/lib/disqualifications.mjs.
 public enum MatchRuling: String, Sendable, Hashable {
-    /// VEX IQ: the team's station scored 0 beside a scoring partner - it was
-    /// disqualified or did not show.
+    /// VEX IQ: the team's station scored less than its partner's (they share
+    /// one score, so they differ only when this team was disqualified or did
+    /// not show). OpenScout's rule.
     case dq
     /// V5: the standings count a win on score as a loss.
     case ruledLoss
@@ -21,7 +22,7 @@ public enum MatchRuling: String, Sendable, Hashable {
 
     public var explanation: String {
         switch self {
-        case .dq: return "Disqualified or did not show: this station scored 0 while its partner scored."
+        case .dq: return "Disqualified or did not show: this station scored less than its partner's, though they share one score."
         case .ruledLoss: return "The official standings count this as a loss although the alliance won on score."
         case .ruledWin: return "The official standings count this as a win although the alliance did not win on score."
         }
@@ -55,10 +56,10 @@ extension Division {
         var rulings = OfficialRulings()
         let played = (matches ?? []).filter { $0.isQualification && $0.isPlayed && ($0.alliances ?? []).count == 2 }
         if iq {
-            for match in played where (match.alliances ?? []).contains(where: { ($0.score ?? 0) > 0 }) {
-                for alliance in match.alliances ?? [] where alliance.score == 0 {
-                    for team in alliance.numbers { rulings.add(match.id, team, .dq) }
-                }
+            for match in played {
+                let alliances = match.alliances ?? []
+                guard let first = alliances[0].score, let second = alliances[1].score, first != second else { continue }
+                for team in alliances[first < second ? 0 : 1].numbers { rulings.add(match.id, team, .dq) }
             }
             return rulings
         }
