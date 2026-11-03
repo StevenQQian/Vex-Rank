@@ -74,3 +74,8 @@ test('an event\'s livestream page has its own address', () => {
   assert.deepEqual(hashToRoute('#/iq/events/65767/live'), { view: 'eventLive', eventId: '65767', program: 'VIQRC' });
   assert.equal(routeToHash('eventLive', null, null), '#/events');
 });
+
+test('the skills leaderboard has its own address', () => {
+  assert.equal(routeToHash('skills', null, null), '#/skills');
+  assert.deepEqual(hashToRoute('#/skills'), { view: 'skills' });
+});

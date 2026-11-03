@@ -8,12 +8,13 @@ import { archiveSource } from './archive-source';
 import { cacheDecision, FRESH_FOR, STALE_FOR, FRESH_FOR_HEADER } from './cache-policy';
 import { canonicalUrl } from './canonical-url';
 import { streamsRoute } from './streams';
+import { handleAccount, type AccountEnv } from './account';
 import { PROGRAMS } from '../lib/programs.mjs';
 import { usePageStore, type PageStore } from '../lib/vex-api';
 import { useIqHistorySource, useIqStateSource, useIqLiveHistorySink, iqRankingsPath, iqHistoryPath, iqHistoryShard, iqStatePath } from '../lib/vcr-iq.mjs';
 import { v5CurrentPath, v5StatePath, useV5SnapshotSource } from '../lib/v5-season';
 
-interface Env { DB: D1Database; ROBOT_EVENTS_API_TOKEN: string; ARCHIVES: Fetcher; YOUTUBE_API_KEY?: string }
+interface Env extends AccountEnv { DB: D1Database; ROBOT_EVENTS_API_TOKEN: string; ARCHIVES: Fetcher; YOUTUBE_API_KEY?: string }
 
 // Settings the apps read at launch, so that things which change on someone
 // else's schedule - the season id, cache lifetimes, a note to readers - do not
@@ -192,7 +193,10 @@ const ALLOWED_ORIGINS = ['https://vex-rank.com', 'https://www.vex-rank.com', 'ht
 function cors(response: Response) {
   const result = new Response(response.body, response);
   result.headers.set('Access-Control-Allow-Origin', ALLOWED_ORIGINS[0]);
-  result.headers.set('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  // Account routes (cloudflare/account.ts) write, and authenticate with a Bearer token.
+  result.headers.set('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  result.headers.set('Access-Control-Allow-Headers', 'Authorization, Content-Type');
+  result.headers.set('Access-Control-Max-Age', '600');
   result.headers.set('X-Content-Type-Options', 'nosniff');
   return result;
 }
@@ -210,6 +214,11 @@ export default {
 };
 
 async function handle(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
+    // Sign-in, synced scouting data, scouting groups and votes. Never cached,
+    // and answered before any of the ratings machinery is set up.
+    const account = await handleAccount(request, env);
+    if (account) return cors(account);
     // The jumper's shared streams: the one route that takes writes.
     if (new URL(request.url).pathname === '/api/streams') {
       if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: { 'Access-Control-Allow-Origin': ALLOWED_ORIGINS[0], 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type', 'Access-Control-Max-Age': '86400' } });
@@ -234,7 +243,6 @@ async function handle(request: Request, env: Env, ctx: ExecutionContext): Promis
       return [...weekly, ...live.filter(point => !seen.has(point.eventId))];
     };
     useIqHistorySource(teamHistory);
-    if (request.method === 'OPTIONS') return cors(new Response(null, { status: 204 }));
     if (request.method !== 'GET') return cors(Response.json({ error: 'Method not allowed' }, { status: 405, headers: { Allow: 'GET, OPTIONS' } }));
     const archiveSeasons:Record<string,string>={'197':'2025-26','190':'2024-25','181':'2023-24','173':'2022-23'};
     const incoming=new URL(request.url),archiveSeason=incoming.searchParams.get('season');

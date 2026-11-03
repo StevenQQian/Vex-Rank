@@ -4,10 +4,12 @@
   "account_id": "15a2576f9d27938b3783308dc2df9420",
   "main": "worker.ts",
   "compatibility_date": "2026-09-14",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
   "workers_dev": true,
   "preview_urls": false,
   "assets": {"directory":"../archive-assets","binding":"ARCHIVES","run_worker_first":true},
-  "d1_databases": [{"binding":"DB","database_name":"vexrank-test","database_id":"f3a664ce-21df-4c7c-8b09-29bb9417f4af"}]
+  "d1_databases": [{"binding":"DB","database_name":"vexrank-test","database_id":"f3a664ce-21df-4c7c-8b09-29bb9417f4af"}],
+  "vars": {"SITE_ORIGIN": "https://vex-rank.com", "DISCORD_CLIENT_ID": ""}
 }
-

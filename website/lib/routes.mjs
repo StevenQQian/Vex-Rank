@@ -6,7 +6,7 @@
  * /Vex-Rank/teams/31260X would 404. A hash survives any static host.
  *
  * Routes: #/  #/events  #/events/:id  #/events/:id/teams/:number  #/events/:id/live  #/rankings
- *         #/stats  #/teams  #/teams/:number
+ *         #/stats  #/teams  #/teams/:number  #/skills
  *
  * VEX IQ uses the same routes under an `iq/` prefix (#/iq/events/65767). V5
  * keeps the bare form, so every link shared before IQ existed still works.
@@ -66,5 +66,6 @@ function parse(parts) {
   if (head === 'events') return param ? { view: 'event', eventId: param } : { view: 'events' };
   if (head === 'teams') return param ? { view: 'team', teamNumber: param } : { view: 'teams' };
   if (head === 'rankings' || head === 'stats') return { view: 'rankings' };
+  if (head === 'skills') return { view: head };
   return null;
 }

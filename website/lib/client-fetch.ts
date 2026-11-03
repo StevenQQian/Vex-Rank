@@ -40,3 +40,9 @@ export async function siteFetch(path:string, init?:RequestInit) {
   return fetch(url,init);
 }
 
+
+/** The full URL of an API path, for links the browser follows itself (e.g. sign-in). */
+export function apiUrl(path:string) {
+  const apiBase=typeof __VEX_API_BASE__==='undefined'?'':__VEX_API_BASE__;
+  return `${apiBase}${path}`;
+}
