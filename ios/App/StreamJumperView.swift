@@ -4,8 +4,8 @@ import VEXRankKit
 
 /// The jumper (VEXRankKit/StreamJumper.swift): an event's livestream pinned
 /// above its schedule, and a jump from any played match to the moment it
-/// started. Matches are placed by when they actually started, never by the
-/// schedule, from one sync point anyone can set for everyone.
+/// started. The timing - dropouts, missing start times, matches played out of
+/// order, viewers' corrections - is all in the kit.
 @available(iOS 17.0, *)
 @Observable
 final class JumperModel {
@@ -20,22 +20,39 @@ final class JumperModel {
     var message: String?
 
     private var eventId = 0
-    private var matches: [Int: DivisionMatch] = [:]
-    private var divisions: [Int: Int] = [:]
+    private var detail: EventDetailResponse?
     private var webcast: String?
     private var shared: [EventStream] = []
     private var local = LocalJumper()
+    private(set) var jumps: [Int: MatchJump] = [:]
+    private(set) var times: [Int: MatchTime] = [:]
+    private(set) var timelines: [String: StreamTimeline] = [:]
+    private var matches: [Int: DivisionMatch] = [:]
 
-    /// The viewer's own unsaved syncs, links and nudges, per event.
-    private struct LocalJumper: Codable { var syncs: [String: EventStream.Sync] = [:]; var added: [EventStream] = []; var nudges: [String: Double] = [:] }
+    /// The viewer's own unsaved corrections, links and nudges, per event.
+    /// (Single "syncs" from before timing was automatic are no longer read.)
+    private struct LocalJumper: Codable {
+        var anchors: [String: [EventStream.Anchor]] = [:]
+        var added: [EventStream] = []
+        var nudges: [String: Double] = [:]
+        var cleared: [String: Bool] = [:]
+        init() {}
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            anchors = (try? c.decode([String: [EventStream.Anchor]].self, forKey: .anchors)) ?? [:]
+            added = (try? c.decode([EventStream].self, forKey: .added)) ?? []
+            nudges = (try? c.decode([String: Double].self, forKey: .nudges)) ?? [:]
+            cleared = (try? c.decode([String: Bool].self, forKey: .cleared)) ?? [:]
+        }
+    }
     private var defaultsKey: String { "vexrank-jumper-\(eventId)" }
 
     @MainActor
     func configure(_ detail: EventDetailResponse) async {
         let first = eventId != detail.event.id
         eventId = detail.event.id
+        self.detail = detail
         matches = detail.matchesByID
-        divisions = detail.divisionByMatch
         webcast = detail.organizer?.webcast
         if first, let data = UserDefaults.standard.data(forKey: defaultsKey), let saved = try? JSONDecoder().decode(LocalJumper.self, from: data) { local = saved }
         rebuild()
@@ -44,22 +61,36 @@ final class JumperModel {
 
     @MainActor
     func refresh() async {
-        let listed = StreamJumper.streams(webcast: webcast).streams.map(\.videoId)
-        if let response = try? await VEXRankAPI.shared.streams(event: eventId, videos: listed) { shared = response.streams }
+        let listed = StreamJumper.streams(webcast: webcast)
+        if let response = try? await VEXRankAPI.shared.streams(event: eventId, videos: listed.streams.map(\.videoId), channels: listed.channels,
+                                                               from: detail?.event.start, to: detail?.event.end) {
+            shared = response.streams
+        }
         rebuild()
     }
 
     private func rebuild() {
         let merged = StreamJumper.streams(webcast: webcast, added: shared + local.added)
         others = merged.others
-        streams = merged.streams.map { stream in
-            var copy = stream
-            if let saved = shared.first(where: { $0.videoId == stream.videoId }) {
-                copy.startTime = saved.startTime; copy.divisionId = saved.divisionId; copy.sync = saved.sync
+        streams = merged.streams
+            .filter { $0.notLive != true || $0.source == "event" || $0.source == "viewer" }
+            .map { stream in
+                var copy = stream
+                if let saved = shared.first(where: { $0.videoId == stream.videoId }) {
+                    copy.startTime = saved.startTime; copy.endTime = saved.endTime; copy.duration = saved.duration
+                    copy.title = saved.title; copy.divisionId = saved.divisionId
+                    copy.anchors = saved.allAnchorsForMerge
+                }
+                // Everyone's corrections, then this device's own for the same matches.
+                let mine = local.anchors[stream.videoId] ?? []
+                let theirs = local.cleared[stream.videoId] == true ? [] : (copy.anchors ?? []).filter { anchor in !mine.contains { $0.matchId == anchor.matchId } }
+                copy.anchors = theirs + mine
+                copy.sync = nil
+                return copy
             }
-            if let mine = local.syncs[stream.videoId] { copy.sync = mine }
-            return copy
-        }
+        let result = StreamJumper.jumps(divisions: detail?.divisions ?? [], streams: streams, nudges: local.nudges,
+                                        eventStart: detail?.event.start, eventEnd: detail?.event.end)
+        jumps = result.jumps; times = result.times; timelines = result.timelines
     }
 
     private func persist() {
@@ -67,14 +98,11 @@ final class JumperModel {
     }
 
     func nudge(for videoId: String) -> Double { local.nudges[videoId] ?? 0 }
-
-    func jump(for matchId: Int) -> MatchJump? {
-        guard let match = matches[matchId] else { return nil }
-        return StreamJumper.jump(to: match, divisionId: divisions[matchId], streams: streams, matches: matches, nudges: local.nudges)
-    }
+    func timeline(for videoId: String) -> StreamTimeline? { timelines[videoId] }
+    func jump(for matchId: Int) -> MatchJump? { jumps[matchId] }
 
     func jump(to matchId: Int) {
-        guard let target = jump(for: matchId) else { return }
+        guard let target = jumps[matchId] else { return }
         current = (target.videoId, target.seconds, matches[matchId]?.name, UUID())
         isOpen = true
     }
@@ -86,17 +114,17 @@ final class JumperModel {
 
     func show(_ videoId: String) { current = (videoId, -1, nil, UUID()) }
 
-    /// Moves the stream's placement by `delta` seconds and the video with it.
+    /// Moves this viewer's placement of the stream by `delta` seconds, and the video with it.
     func nudge(_ delta: Double) {
         guard let videoId = current?.videoId else { return }
         local.nudges[videoId, default: 0] += delta
-        persist()
+        persist(); rebuild()
         current = (videoId, Int(max(0, position + delta)), current?.match, UUID())
     }
 
-    /// Played matches, in the order they were played, for the sync picker.
+    /// Played matches, in the order they were played, for the match picker.
     var playedMatches: [DivisionMatch] {
-        matches.values.filter { $0.started != nil }.sorted { ($0.started ?? "") < ($1.started ?? "") }
+        matches.values.filter { times[$0.id] != nil }.sorted { times[$0.id]!.time < times[$1.id]!.time }
     }
 
     var lastMatchId: Int? {
@@ -104,22 +132,51 @@ final class JumperModel {
         return matches.values.first { $0.name == name }?.id
     }
 
-    /// "This match starts here": saved for everyone, and kept on this device
-    /// so it holds even if the save does not go through.
+    /// "This match starts here", at the video's position.
     @MainActor
     func sync(matchId: Int) async {
-        guard let videoId = current?.videoId, position >= 1 else { return }
-        let sync = EventStream.Sync(matchId: matchId, seconds: position.rounded())
-        local.syncs[videoId] = sync
+        guard current != nil, position >= 1 else { return }
+        await correct(matchId: matchId, seconds: position.rounded())
+    }
+
+    /// The nudged position of the last match picked, saved for everyone.
+    @MainActor
+    func saveNudge() async {
+        guard let id = lastMatchId, let target = jumps[id] else { return }
+        await correct(matchId: id, seconds: Double(target.seconds))
+    }
+
+    /// A correction, from its match on: saved for everyone, and kept on this
+    /// device until the save is confirmed. It folds in this stream's nudge.
+    @MainActor
+    func correct(matchId: Int, seconds: Double) async {
+        guard let videoId = current?.videoId else { return }
+        local.anchors[videoId, default: []].removeAll { $0.matchId == matchId }
+        local.anchors[videoId]!.append(.init(matchId: matchId, seconds: seconds))
         local.nudges[videoId] = 0
         persist(); rebuild()
-        if let response = try? await VEXRankAPI.shared.postStream(["event": eventId, "videoId": videoId, "sync": ["matchId": matchId, "seconds": sync.seconds]]) {
+        if let response = try? await VEXRankAPI.shared.postStream(["event": eventId, "videoId": videoId, "anchor": ["matchId": matchId, "seconds": seconds]]) {
             shared = response.streams
-            local.syncs[videoId] = nil
+            local.anchors[videoId]?.removeAll { $0.matchId == matchId }
             persist(); rebuild()
-            message = "Synced for everyone."
+            message = "Saved: this match and the ones after it now open here for everyone."
         } else {
-            message = "Synced on this device (could not save it for others)."
+            message = "Saved on this device (could not save it for others)."
+        }
+    }
+
+    /// Back to YouTube's own timing: everyone's corrections, and this device's.
+    @MainActor
+    func reset() async {
+        guard let videoId = current?.videoId else { return }
+        local.anchors[videoId] = []; local.nudges[videoId] = 0; local.cleared[videoId] = true
+        persist(); rebuild()
+        if let response = try? await VEXRankAPI.shared.postStream(["event": eventId, "videoId": videoId, "clearAnchors": true]) {
+            shared = response.streams; local.cleared[videoId] = nil
+            persist(); rebuild()
+            message = "Back to YouTube's own timing, for everyone."
+        } else {
+            message = "Back to YouTube's timing on this device."
         }
     }
 
@@ -139,6 +196,10 @@ final class JumperModel {
         show(videoId)
         message = "Stream added."
     }
+}
+
+private extension EventStream {
+    var allAnchorsForMerge: [Anchor] { (anchors ?? []) + (sync.map { [$0] } ?? []) }
 }
 
 /// The player and its controls, pinned above a match list.
@@ -205,38 +266,47 @@ struct JumperPanel: View {
                     }
                 }
 
-                let stream = jumper.streams.first { $0.videoId == current.videoId }
+                let timeline = jumper.timeline(for: current.videoId)
                 let nudge = jumper.nudge(for: current.videoId)
-                let nudged = nudge != 0 ? " (nudged \(nudge > 0 ? "+" : "−")\(Int(abs(nudge)))s)" : ""
-                Text(stream?.isAutomatic == true
-                     ? "Synced automatically from when the broadcast went live\(nudged). Matches are placed by when they actually started; if a jump lands a little off, nudge it."
-                     : stream?.isTimed == true
-                     ? "Synced by a viewer\(nudged). Matches are placed by when they actually started; if a jump lands off, nudge it, or re-sync below."
-                     : "Not synced yet: play to the start of any match, pick it below and tap Starts at. Every match then gets a jump, for everyone.")
+                Text(timeline?.automatic == true ? "Synced automatically\(timeline!.corrections > 0 ? " · \(timeline!.corrections) correction\(timeline!.corrections == 1 ? "" : "s")" : "")"
+                     : timeline != nil ? "Synced by viewers" : "Not synced yet: play to the start of any match, pick it below and tap Starts at. Every match then gets a jump, for everyone.")
                     .font(.caption2).foregroundStyle(.secondary)
-
-                if stream?.isAutomatic != true {
-                    HStack(spacing: 8) {
-                        Menu {
-                            ForEach(jumper.playedMatches.reversed()) { match in
-                                Button(match.name ?? "Match") { syncMatch = match.id }
-                            }
-                        } label: {
-                            Text(jumper.playedMatches.first { $0.id == (syncMatch ?? jumper.lastMatchId) }?.name ?? "Match on screen…")
-                                .font(.caption).lineLimit(1)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, 8).padding(.vertical, 6)
-                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-                        }
-                        Button("Starts at \(StreamJumper.videoTime(jumper.position))") {
-                            guard let id = syncMatch ?? jumper.lastMatchId else { return }
-                            Task { await jumper.sync(matchId: id) }
-                        }
+                if let dropouts = timeline?.dropouts, !dropouts.isEmpty {
+                    let minutes = Int((dropouts.reduce(0) { $0 + $1.seconds } / 60).rounded())
+                    Text("YouTube's video is missing \(minutes) min the stream was down\(dropouts.count == 1 ? ", taken to be in the pause before the match at \(dropouts[0].at.formatted(date: .omitted, time: .shortened))" : ", spread over the longest pauses"). Matches after it are placed from the end of the video.")
+                        .font(.caption2).foregroundStyle(.orange)
+                }
+                if nudge != 0, let name = current.match {
+                    Button("Save this timing for everyone, from \(name) on") { Task { await jumper.saveNudge() } }
                         .font(.caption.weight(.semibold))
                         .buttonStyle(.bordered)
                         .tint(theme.accent)
-                        .disabled((syncMatch ?? jumper.lastMatchId) == nil || jumper.position < 1)
+                }
+
+                HStack(spacing: 8) {
+                    Menu {
+                        ForEach(jumper.playedMatches.reversed()) { match in
+                            Button(match.name ?? "Match") { syncMatch = match.id }
+                        }
+                    } label: {
+                        Text(jumper.playedMatches.first { $0.id == (syncMatch ?? jumper.lastMatchId) }?.name ?? (timeline == nil ? "Match on screen…" : "Or mark a match on screen…"))
+                            .font(.caption).lineLimit(1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8).padding(.vertical, 6)
+                            .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
                     }
+                    Button("Starts at \(StreamJumper.videoTime(jumper.position))") {
+                        guard let id = syncMatch ?? jumper.lastMatchId else { return }
+                        Task { await jumper.sync(matchId: id) }
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .tint(theme.accent)
+                    .disabled((syncMatch ?? jumper.lastMatchId) == nil || jumper.position < 1)
+                }
+                if timeline?.automatic == true, (timeline?.corrections ?? 0) > 0 {
+                    Button("Remove corrections and use YouTube's timing") { Task { await jumper.reset() } }
+                        .font(.caption2).tint(.secondary)
                 }
             } else {
                 Text("No livestream is listed for this event yet. Tap + to add its YouTube link.")
@@ -281,7 +351,7 @@ struct JumpButton: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(theme.accent)
-            .accessibilityLabel("Watch \(name) on the livestream, at \(StreamJumper.videoTime(Double(target.seconds)))")
+            .accessibilityLabel("Watch \(name) on the livestream, at \(target.estimated ? "about " : "")\(StreamJumper.videoTime(Double(target.seconds)))")
         }
     }
 }

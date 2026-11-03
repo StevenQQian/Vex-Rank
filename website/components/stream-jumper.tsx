@@ -1,15 +1,15 @@
 'use client';
 // The jumper (lib/stream-jumper.mjs): an event's livestream on a page of its
 // own, the controls and the match list wrapped around it, and a jump from any
-// played match to the moment it started. Matches are placed by when they
-// actually started, never by the schedule - automatically from YouTube's
-// broadcast start, or from one sync point a viewer sets for everyone.
+// played match to the moment it started. The timing - dropouts, missing start
+// times, matches played out of order, viewers' corrections - is all in
+// lib/stream-jumper.mjs.
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, Play, Search } from 'lucide-react';
 import { siteFetch } from '@/lib/client-fetch';
-import { eventStreams, matchJump, matchesById, videoTime, youtubeId } from '@/lib/stream-jumper.mjs';
+import { buildJumper, eventStreams, videoTime, youtubeId } from '@/lib/stream-jumper.mjs';
 
-type Jump = { videoId: string; seconds: number };
+type Jump = { videoId: string; seconds: number; estimated?: boolean };
 
 const NUDGES = [-60, -30, -10, -5, 5, 10, 30, 60];
 const nudgeLabel = (delta: number) => `${delta < 0 ? '−' : '+'}${Math.abs(delta) >= 60 ? `${Math.abs(delta) / 60}m` : `${Math.abs(delta)}s`}`;
@@ -20,28 +20,43 @@ const watchUrl = (videoId: string, seconds = 0) => `https://www.youtube.com/watc
 
 /**
  * An event's streams and where each match sits on them: the organizer's
- * webcast links, then shared ones from the Worker, each timed automatically
- * (YouTube's broadcast start) or by a viewer's sync, plus this viewer's nudges.
+ * webcast links and the broadcasts on the channels it links, then streams
+ * viewers added - each with YouTube's facts and everyone's corrections, plus
+ * this viewer's own unsaved corrections and nudges.
  */
-export function useJumperState(eventId: string | number, divisions: any[], webcast?: string) {
+export function useJumperState(eventId: string | number, divisions: any[], webcast?: string, info?: { start?: string; end?: string }) {
   const [shared, setShared] = useState<any[]>([]);
   const [local, setLocal] = useState<any>({});
-  const byId = useMemo(() => matchesById(divisions), [divisions]);
-  const listed = useMemo(() => (eventStreams(webcast) as any).streams.map((stream: any) => stream.videoId).join(','), [webcast]);
+  const listed = useMemo(() => eventStreams(webcast) as any, [webcast]);
+  const query = useMemo(() => {
+    const params = new URLSearchParams({ event: String(eventId) });
+    const videos = listed.streams.map((stream: any) => stream.videoId);
+    if (videos.length) params.set('videos', videos.join(','));
+    if (listed.channels.length && info?.start) { params.set('channels', listed.channels.join(',')); params.set('from', info.start); params.set('to', info.end ?? info.start); }
+    return params.toString();
+  }, [eventId, listed, info?.start, info?.end]);
 
   useEffect(() => { setLocal(readLocal(eventId)); }, [eventId]);
   const refresh = useCallback(() => {
-    siteFetch(`/api/streams?event=${eventId}${listed ? `&videos=${listed}` : ''}`).then(response => response.ok ? response.json() : null).then((body: any) => { if (body?.streams) setShared(body.streams); }).catch(() => {});
-  }, [eventId, listed]);
+    siteFetch(`/api/streams?${query}`).then(response => response.ok ? response.json() : null).then((body: any) => { if (body?.streams) setShared(body.streams); }).catch(() => {});
+  }, [query]);
   useEffect(() => { refresh(); }, [refresh]);
+  // While the event runs, a stream that is still live gets its end and length later.
+  useEffect(() => { const timer = setInterval(refresh, 5 * 60000); return () => clearInterval(timer); }, [refresh]);
 
-  const streams = useMemo(() => (eventStreams(webcast, [...shared, ...(local.added ?? [])]) as any).streams.map((stream: any) => {
-    const saved = shared.find(entry => entry.videoId === stream.videoId);
-    return { ...stream, ...saved, source: stream.source, sync: local.syncs?.[stream.videoId] ?? saved?.sync ?? null };
-  }), [webcast, shared, local]);
-  const others = useMemo(() => (eventStreams(webcast) as any).others as string[], [webcast]);
+  const streams = useMemo(() => (eventStreams(webcast, [...shared, ...(local.added ?? [])]) as any).streams
+    .filter((stream: any) => !stream.notLive || stream.source === 'event' || stream.addedAt || stream.source === 'viewer')
+    .map((stream: any) => {
+      const saved = shared.find(entry => entry.videoId === stream.videoId) ?? {};
+      // Corrections: everyone's, then this device's own. (Single "syncs" saved
+      // before timing was automatic are left out: they were set without it.)
+      const mine = local.anchors?.[stream.videoId] ?? [];
+      const theirs = [...(saved.anchors ?? []), ...(saved.sync ? [saved.sync] : [])].filter((anchor: any) => !mine.some((own: any) => own.matchId === anchor.matchId));
+      return { ...stream, ...saved, source: stream.source, sync: null, anchors: local.cleared?.[stream.videoId] ? mine : [...theirs, ...mine] };
+    }), [webcast, shared, local]);
   const nudges: Record<string, number> = local.nudges ?? {};
-  const jumpFor = useCallback((match: any): Jump | null => matchJump(streams, byId.get(Number(match.id)) ?? match, byId, nudges), [streams, byId, nudges]);
+  const jumper = useMemo(() => buildJumper({ divisions, streams, nudges, eventStart: info?.start, eventEnd: info?.end }), [divisions, streams, nudges, info?.start, info?.end]);
+  const jumpFor = useCallback((match: any): Jump | null => jumper.jumpFor(match), [jumper]);
   const update = useCallback((change: (value: any) => any) => setLocal((previous: any) => { const next = change(previous); writeLocal(eventId, next); return next; }), [eventId]);
 
   const nudge = useCallback((videoId: string, delta: number | null) => update(value => ({ ...value, nudges: { ...value.nudges, [videoId]: delta === null ? 0 : (value.nudges?.[videoId] ?? 0) + delta } })), [update]);
@@ -53,18 +68,29 @@ export function useJumperState(eventId: string | number, divisions: any[], webca
     else update(value => ({ ...value, added: [...(value.added ?? []).filter((entry: any) => entry.videoId !== videoId), { videoId, url, source: 'viewer' }] }));
     return { videoId };
   }, [eventId, refresh, update]);
-  // Saved for everyone; kept on this device too, so it holds even if the save
-  // does not go through. A fresh sync clears this stream's nudge.
-  const sync = useCallback(async (videoId: string, matchId: number, seconds: number) => {
-    update(value => ({ ...value, syncs: { ...value.syncs, [videoId]: { matchId, seconds } }, nudges: { ...value.nudges, [videoId]: 0 } }));
-    const response = await siteFetch('/api/streams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: Number(eventId), videoId, sync: { matchId, seconds } }) }).catch(() => null);
+  // A correction - "this match starts here" - saved for everyone, and kept on
+  // this device until the save is confirmed. It folds in this stream's nudge.
+  const correct = useCallback(async (videoId: string, matchId: number, seconds: number) => {
+    update(value => ({ ...value, anchors: { ...value.anchors, [videoId]: [...(value.anchors?.[videoId] ?? []).filter((entry: any) => entry.matchId !== matchId), { matchId, seconds }] }, nudges: { ...value.nudges, [videoId]: 0 } }));
+    const response = await siteFetch('/api/streams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: Number(eventId), videoId, anchor: { matchId, seconds } }) }).catch(() => null);
     if (!response?.ok) return false;
     const body: any = await response.json().catch(() => null);
-    if (body?.streams) { setShared(body.streams); update(value => { const syncs = { ...value.syncs }; delete syncs[videoId]; return { ...value, syncs }; }); }
+    if (body?.streams) {
+      setShared(body.streams);
+      update(value => ({ ...value, anchors: { ...value.anchors, [videoId]: (value.anchors?.[videoId] ?? []).filter((entry: any) => entry.matchId !== matchId) }, syncs: { ...value.syncs, [videoId]: undefined } }));
+    }
     return true;
   }, [eventId, update]);
+  // Back to YouTube's own timing: everyone's corrections, and this device's.
+  const reset = useCallback(async (videoId: string) => {
+    update(value => ({ ...value, anchors: { ...value.anchors, [videoId]: [] }, syncs: { ...value.syncs, [videoId]: undefined }, nudges: { ...value.nudges, [videoId]: 0 }, cleared: { ...value.cleared, [videoId]: true } }));
+    const response = await siteFetch('/api/streams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ event: Number(eventId), videoId, clearAnchors: true }) }).catch(() => null);
+    const body: any = response?.ok ? await response.json().catch(() => null) : null;
+    if (body?.streams) { setShared(body.streams); update(value => ({ ...value, cleared: { ...value.cleared, [videoId]: undefined } })); }
+    return Boolean(body);
+  }, [eventId, update]);
 
-  return { streams, others, byId, nudges, jumpFor, nudge, add, sync };
+  return { streams, others: listed.others as string[], byId: jumper.byId, times: jumper.times, timelineOf: jumper.timelineOf, nudges, jumpFor, nudge, add, correct, reset };
 }
 
 // The match lists elsewhere on the site: a ▶ where a match can be placed on
@@ -73,8 +99,8 @@ type Jumper = { streams: any[]; jumpFor: (match: any) => Jump | null; watch: (ma
 const JumperContext = createContext<Jumper | null>(null);
 export const useJumper = () => useContext(JumperContext);
 
-export function JumperProvider({ eventId, divisions, webcast, onWatch, children }: { eventId: string | number; divisions: any[]; webcast?: string; onWatch?: (match?: any) => void; children: React.ReactNode }) {
-  const { streams, jumpFor } = useJumperState(eventId, divisions, webcast);
+export function JumperProvider({ eventId, divisions, webcast, info, onWatch, children }: { eventId: string | number; divisions: any[]; webcast?: string; info?: { start?: string; end?: string }; onWatch?: (match?: any) => void; children: React.ReactNode }) {
+  const { streams, jumpFor } = useJumperState(eventId, divisions, webcast, info);
   const value = useMemo(() => (onWatch ? { streams, jumpFor, watch: onWatch } : null), [streams, jumpFor, onWatch]);
   return <JumperContext.Provider value={value}>{children}</JumperContext.Provider>;
 }
@@ -123,7 +149,7 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
   event: any; details: any; initialMatchId?: number | null; initialTeam?: string; goBack: () => void; backLabel?: string;
 }) {
   const divisions = details?.divisions ?? [];
-  const { streams, others, byId, nudges, jumpFor, nudge, add, sync } = useJumperState(event.id, divisions, details?.organizer?.webcast);
+  const { streams, others, byId, times, timelineOf, nudges, jumpFor, nudge, add, correct, reset } = useJumperState(event.id, divisions, details?.organizer?.webcast, details?.event);
   const [videoId, setVideoId] = useState<string | null>(null);
   const [selected, setSelected] = useState<number | null>(initialMatchId ?? null);
   const [command, setCommand] = useState<{ seconds: number; at: number } | null>(null);
@@ -133,7 +159,7 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
   const [division, setDivision] = useState<string>('all');
   const [playedOnly, setPlayedOnly] = useState(false);
   const [link, setLink] = useState('');
-  const [syncMatch, setSyncMatch] = useState('');
+  const [markMatch, setMarkMatch] = useState('');
   const [message, setMessage] = useState('');
   const host = useRef<HTMLDivElement>(null);
   const player = useRef<any>(null);
@@ -141,17 +167,18 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
   const listRef = useRef<HTMLDivElement>(null);
   const opened = useRef(false);
 
-  const stream = streams.find((entry: any) => entry.videoId === videoId) ?? null;
-  const automatic = Boolean(stream?.startTime);
-  const timed = automatic || Boolean(stream?.sync);
+  const timeline = videoId ? timelineOf(videoId) : null;
+  const automatic = Boolean(timeline?.automatic);
+  const timed = Boolean(timeline);
   const offset = videoId ? nudges[videoId] ?? 0 : 0;
 
-  // Every match in play order, with where it sits on the stream.
+  // Every match in the order it was played (not the schedule's), with where it sits on the stream.
   const matches = useMemo(() => [...byId.values()]
-    .map((match: any) => ({ match, jump: jumpFor(match) }))
-    .sort((a: any, b: any) => (Date.parse(a.match.started ?? a.match.scheduled ?? '') || Infinity) - (Date.parse(b.match.started ?? b.match.scheduled ?? '') || Infinity) || Number(a.match.matchnum) - Number(b.match.matchnum)),
-  [byId, jumpFor]);
-  const onThisStream = useMemo(() => matches.filter((entry: any) => entry.jump && entry.jump.videoId === videoId), [matches, videoId]);
+    .map((match: any) => ({ match, jump: jumpFor(match), when: times.get(Number(match.id)) ?? null }))
+    .sort((a: any, b: any) => (a.when?.time ?? Date.parse(a.match.scheduled ?? '') ?? Infinity) - (b.when?.time ?? Date.parse(b.match.scheduled ?? '') ?? Infinity) || Number(a.match.matchnum) - Number(b.match.matchnum)),
+  [byId, jumpFor, times]);
+  // On the video, in the video's order: what Prev/Next and "now playing" walk.
+  const onThisStream = useMemo(() => matches.filter((entry: any) => entry.jump && entry.jump.videoId === videoId).sort((a: any, b: any) => a.jump.seconds - b.jump.seconds), [matches, videoId]);
   // The match playing now: the last to start at or before the video's position,
   // if it started within the last four minutes (otherwise it is between matches).
   const nowIndex = useMemo(() => {
@@ -161,17 +188,19 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
   }, [onThisStream, position]);
   const now = nowIndex >= 0 ? onThisStream[nowIndex] : null;
   const live = now && position - (now.jump?.seconds ?? 0) < 240;
+  // The match a nudge was lining up: the one playing, or the one last picked.
+  const reference = (live ? now?.match : null) ?? (selected ? byId.get(selected) : null) ?? null;
 
   // Open the stream: the first one, or the one the requested match is on.
   useEffect(() => {
     if (opened.current || !streams.length) return;
     const target = initialMatchId != null ? jumpFor(byId.get(Number(initialMatchId)) ?? { id: initialMatchId }) : null;
-    if (initialMatchId != null && !target && !streams.some((entry: any) => entry.startTime || entry.sync)) { setVideoId(streams[0].videoId); opened.current = true; return; }
+    if (initialMatchId != null && !target && !streams.some((entry: any) => timelineOf(entry.videoId))) { setVideoId(streams[0].videoId); opened.current = true; return; }
     if (initialMatchId != null && !target) return; // wait until the timing arrives
     opened.current = true;
     setVideoId(target?.videoId ?? streams[0].videoId);
     if (target) setCommand({ seconds: target.seconds, at: Date.now() });
-  }, [streams, initialMatchId, jumpFor, byId]);
+  }, [streams, initialMatchId, jumpFor, byId, timelineOf]);
 
   // One player for the page's life: a new video loads into it, a jump seeks.
   useEffect(() => {
@@ -288,20 +317,27 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
         {videoId && <div className="border border-white/10 bg-[var(--c-surface)] p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] font-semibold uppercase tracking-[.16em] text-white/50">Timing</p>
-            <p className="text-xs text-white/55">{automatic ? 'Synced automatically from the broadcast start' : timed ? 'Synced by a viewer' : 'Not synced yet'}{offset ? ` · adjusted ${offset > 0 ? '+' : '−'}${Math.abs(offset)}s` : ''}</p>
+            <p className="text-xs text-white/55">{automatic ? 'Synced automatically' : timed ? 'Synced by viewers' : 'Not synced yet'}{timeline?.corrections ? ` · ${timeline.corrections} correction${timeline.corrections === 1 ? '' : 's'}` : ''}{offset ? ` · your adjustment ${offset > 0 ? '+' : '−'}${Math.abs(offset)}s` : ''}</p>
           </div>
+          {timeline?.gaps?.length > 0 && <p className="mt-2 border-l-2 border-amber-400/60 pl-2 text-xs leading-5 text-white/60">
+            YouTube’s video is missing {Math.round(timeline.gaps.reduce((sum: number, gap: any) => sum + gap.seconds, 0) / 60)} min the stream was down{timeline.gaps.length === 1 ? `, taken to be in the pause before the match at ${new Date(timeline.gaps[0].at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : ', spread over the event’s longest pauses'}. Matches after it are placed from the end of the video. If a match there lands off, correct it below.
+          </p>}
           <div className="mt-3 grid grid-cols-8 gap-1">{NUDGES.map(delta => <button key={delta} onClick={() => shift(delta)} aria-label={`${Math.abs(delta)} seconds ${delta < 0 ? 'earlier' : 'later'}`} className={`h-9 border font-mono text-[11px] text-white/70 hover:border-white/30 hover:text-white sm:text-xs ${delta < 0 ? 'border-white/10' : 'border-white/10 bg-white/[.03]'}`}>{nudgeLabel(delta)}</button>)}</div>
-          <div className="mt-1 flex justify-between text-[10px] text-white/35"><span>← earlier</span>{offset !== 0 && <button onClick={() => shift(null)} className="text-white/55 underline-offset-2 hover:text-white hover:underline">Reset adjustment</button>}<span>later →</span></div>
-          <p className="mt-2 text-xs leading-5 text-white/50">{automatic ? 'Each match opens at the moment it actually started. If the stream runs a little behind the field, nudge it once - every jump follows.' : timed ? 'Each match opens at the moment it actually started, from a sync a viewer set. Nudge if it lands off, or re-sync below.' : 'Play to the start of any match, pick it and press “Starts at”. Every match then gets a jump, for everyone.'}</p>
-          {!automatic && <div className="mt-3 flex gap-1.5">
-            <select value={syncMatch || (selected ? String(selected) : '')} onChange={event => setSyncMatch(event.target.value)} aria-label="Match on screen" className="min-w-0 flex-1 border border-white/15 bg-black/30 px-2 py-2 text-xs">
-              <option value="">Match on screen…</option>
-              {matches.filter(({ match }: any) => match.started).map(({ match }: any) => <option key={match.id} value={match.id}>{match.name}{multipleDivisions ? ` · ${match.division?.name}` : ''}</option>)}
+          <div className="mt-1 flex justify-between text-[10px] text-white/35"><span>← earlier</span>{offset !== 0 && <button onClick={() => shift(null)} className="text-white/55 underline-offset-2 hover:text-white hover:underline">Undo adjustment</button>}<span>later →</span></div>
+          {/* Nudged a match into place: offer it to everyone, from that match on. */}
+          {offset !== 0 && reference && <button onClick={async () => { const target = jumpFor(reference); if (!target) return; const ok = await correct(videoId, Number(reference.id), target.seconds); setMessage(ok ? `Saved: ${reference.name} and the matches after it now open here for everyone.` : 'Saved on this device - it could not be saved for others.'); }}
+            className="mt-2 w-full border border-[var(--c-accent)] px-3 py-2 text-xs font-semibold text-[var(--c-accent)]">Save this timing for everyone, from {reference.name} on</button>}
+          <p className="mt-2 text-xs leading-5 text-white/50">{timed ? 'Each match opens when it actually started, whatever order it was played in. Nudge if one lands off; a saved correction fixes it and every match after it for everyone, leaving the ones before alone.' : 'Play to the start of any match, pick it and press “Starts at”. Every match then gets a jump, for everyone.'}</p>
+          <div className="mt-3 flex gap-1.5">
+            <select value={markMatch || (selected ? String(selected) : '')} onChange={event => setMarkMatch(event.target.value)} aria-label="Match on screen" className="min-w-0 flex-1 border border-white/15 bg-black/30 px-2 py-2 text-xs">
+              <option value="">{timed ? 'Or mark a match on screen…' : 'Match on screen…'}</option>
+              {matches.filter(({ when }: any) => when).map(({ match }: any) => <option key={match.id} value={match.id}>{match.name}{multipleDivisions ? ` · ${match.division?.name}` : ''}</option>)}
             </select>
-            <button disabled={!(syncMatch || selected) || position < 1} title={position < 1 ? 'Play the video to the start of a match first' : undefined}
-              onClick={async () => { const ok = await sync(videoId, Number(syncMatch || selected), Math.round(position)); setMessage(ok ? 'Synced for everyone.' : 'Synced on this device - it could not be saved for others.'); }}
+            <button disabled={!(markMatch || selected) || position < 1} title={position < 1 ? 'Play the video to the start of a match first' : undefined}
+              onClick={async () => { const id = Number(markMatch || selected); const ok = await correct(videoId, id, Math.round(position)); setMessage(ok ? 'Saved for everyone.' : 'Saved on this device - it could not be saved for others.'); setMarkMatch(''); }}
               className="whitespace-nowrap border border-[var(--c-accent)] px-3 py-2 text-xs font-semibold text-[var(--c-accent)] disabled:opacity-40">Starts at {videoTime(position)}</button>
-          </div>}
+          </div>
+          {automatic && (timeline?.corrections ?? 0) > 0 && <button onClick={async () => { const ok = await reset(videoId); setMessage(ok ? 'Back to YouTube’s own timing, for everyone.' : 'Back to YouTube’s timing on this device.'); }} className="mt-2 text-xs text-white/50 underline-offset-2 hover:text-white hover:underline">Remove corrections and use YouTube’s timing</button>}
           {message && <p className="mt-2 text-xs text-white/60" role="status">{message}</p>}
         </div>}
 
@@ -342,7 +378,7 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
                 <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full border ${playing ? 'border-[var(--c-accent)] bg-[var(--c-accent)] text-[var(--c-on-accent)]' : 'border-white/15 text-white/55'}`}>{target ? <Play className="h-3 w-3 fill-current" /> : <span className="text-[9px]">—</span>}</span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline justify-between gap-2"><b className="truncate text-[13px]">{match.name}{multipleDivisions && division === 'all' ? <span className="font-normal text-white/45"> · {match.division?.name}</span> : null}</b>
-                    <span className="shrink-0 font-mono text-[11px] text-white/45">{target ? videoTime(target.seconds) : match.started ? 'not on stream' : 'not played'}</span></span>
+                    <span className="shrink-0 font-mono text-[11px] text-white/45">{target ? `${target.estimated ? '≈' : ''}${videoTime(target.seconds)}` : times.get(Number(match.id)) ? 'not on stream' : 'not played'}</span></span>
                   <span className="mt-0.5 flex items-center gap-2 font-mono text-[12px]">
                     <span className="text-red-300">{teamsOf(red).map(number => <span key={number} className={focus(number) ? 'font-bold text-[var(--c-accent)]' : ''}>{number} </span>)}</span>
                     {played && <span className="text-white/60">{red?.score}–{blue?.score}</span>}

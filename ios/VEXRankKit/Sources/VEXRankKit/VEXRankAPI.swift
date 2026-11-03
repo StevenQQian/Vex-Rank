@@ -222,11 +222,17 @@ public actor VEXRankAPI {
     }
 
     /// The jumper's shared streams for an event (website/cloudflare/streams.ts);
-    /// `videos` are ones the event's webcast notes list, timed where YouTube allows.
-    public func streams(event: Int, videos: [String]) async throws -> SharedStreamsResponse {
-        var path = "/api/streams?event=\(event)"
-        if !videos.isEmpty { path += "&videos=\(videos.joined(separator: ","))" }
-        return try await get(path, attempts: 1, fresh: true)
+    /// `videos` are ones the event's webcast notes list, with YouTube's facts.
+    /// `channels` are YouTube channels the notes link, searched for broadcasts between `from` and `to`.
+    public func streams(event: Int, videos: [String], channels: [String] = [], from: String? = nil, to: String? = nil) async throws -> SharedStreamsResponse {
+        var items = [URLQueryItem(name: "event", value: String(event))]
+        if !videos.isEmpty { items.append(URLQueryItem(name: "videos", value: videos.joined(separator: ","))) }
+        if !channels.isEmpty, let from {
+            items += [URLQueryItem(name: "channels", value: channels.joined(separator: ",")), URLQueryItem(name: "from", value: from), URLQueryItem(name: "to", value: to ?? from)]
+        }
+        var components = URLComponents()
+        components.queryItems = items
+        return try await get("/api/streams?\(components.percentEncodedQuery ?? "")", attempts: 1, fresh: true)
     }
 
     /// Adds a YouTube link to an event, or saves a sync point - "this match
