@@ -58,9 +58,13 @@ export async function directTeamProfile(path: string): Promise<Response | null> 
  * 1.5 s (`worker`); a poll passes no `worker` and keeps the notes it has.
  */
 let directEventsPausedUntil = 0;
+// The Worker's answer for each event, kept past the 1.5 s wait so notes that
+// arrive later still reach the page (organizerNotes).
+const workerNotes = new Map<string, Promise<{ organizer?: any } | null>>();
 export async function directEventDetail(id: string, worker?: () => Promise<Response>): Promise<Response | null> {
   if (!hasDirectToken() || Date.now() < directEventsPausedUntil) return null;
   const notes = worker ? worker().then(response => response.ok ? response.json() : null).catch(() => null) : null;
+  if (notes) workerNotes.set(id, notes as Promise<{ organizer?: any } | null>);
   try {
     const { eventDetailResponse } = await import('./event-detail-build');
     const response = await eventDetailResponse(id, __VEX_DIRECT_TOKEN__, { organizer: false });
@@ -75,4 +79,17 @@ export async function directEventDetail(id: string, worker?: () => Promise<Respo
     directEventsPausedUntil = Date.now() + 5 * 60000;
     return null;
   }
+}
+
+/**
+ * An event's organizer notes (webcast, agenda...) when the page's copy came
+ * without them: the Worker answer the direct read started, however late it
+ * lands. Null when there is none.
+ */
+export async function organizerNotes(id: string): Promise<any | null> {
+  const pending = workerNotes.get(id);
+  if (!pending) return null;
+  const body = await pending;
+  const organizer = body?.organizer;
+  return organizer && Object.values(organizer).some(Boolean) ? organizer : null;
 }
