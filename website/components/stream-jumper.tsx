@@ -32,7 +32,10 @@ export function useJumperState(eventId: string | number, divisions: any[], webca
     const params = new URLSearchParams({ event: String(eventId) });
     const videos = listed.streams.map((stream: any) => stream.videoId);
     if (videos.length) params.set('videos', videos.join(','));
-    if (listed.channels.length && info?.start) { params.set('channels', listed.channels.join(',')); params.set('from', info.start); params.set('to', info.end ?? info.start); }
+    if (listed.channels.length) params.set('channels', listed.channels.join(','));
+    // The event's days: where the Worker looks for broadcasts on linked channels, and
+    // for the other days' streams on the listed videos' channels.
+    if (info?.start) { params.set('from', info.start); params.set('to', info.end ?? info.start); }
     return params.toString();
   }, [eventId, listed, info?.start, info?.end]);
 
@@ -135,6 +138,16 @@ function loadYouTube(): Promise<any> {
     document.head.appendChild(script);
   });
   return youtubeReady;
+}
+
+/** "Day 2" when the title says so, else the day it went live, else "Stream 2". */
+export function streamLabel(stream: any, index: number, all: any[]) {
+  const day = /\bday\s*(\d+)\b/i.exec(stream.title ?? '')?.[1];
+  if (day) return `Day ${day}`;
+  const start = Date.parse(stream.startTime ?? '');
+  const days = new Set(all.map(entry => entry.startTime && new Date(entry.startTime).toDateString()).filter(Boolean));
+  if (Number.isFinite(start) && days.size > 1) return new Date(start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+  return `Stream ${index + 1}`;
 }
 
 const side = (match: any, color: string) => (match.alliances ?? []).find((alliance: any) => alliance.color === color);
@@ -263,11 +276,14 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
     nudge(videoId, delta);
     if (player.current?.seekTo) player.current.seekTo(Math.max(0, position + by), true);
   };
+  // Previous/next in play order across every stream, so the last match of
+  // day 1 steps into day 2's video.
+  const watchable = useMemo(() => matches.filter((entry: any) => entry.jump), [matches]);
   const step = (direction: number) => {
-    const list = onThisStream;
-    if (!list.length) return;
-    const index = nowIndex < 0 ? (direction > 0 ? 0 : -1) : Math.min(list.length - 1, Math.max(0, nowIndex + direction));
-    if (index >= 0) jump(list[index].match);
+    if (!watchable.length) return;
+    const from = now ? watchable.findIndex((entry: any) => entry.match.id === now.match.id) : selected ? watchable.findIndex((entry: any) => Number(entry.match.id) === selected) : -1;
+    const index = from < 0 ? (direction > 0 ? 0 : -1) : Math.min(watchable.length - 1, Math.max(0, from + direction));
+    if (index >= 0) jump(watchable[index].match);
   };
 
   // The list: by team and division, played only if asked.
@@ -284,7 +300,7 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
     <button onClick={goBack} className="-ml-1 mb-3 flex min-h-11 items-center gap-2 px-1 text-sm font-bold text-white/50 transition-colors hover:text-white"><ArrowLeft className="h-4 w-4" /> Back to {backLabel}</button>
     <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
       <div><p className="text-[11px] italic text-white/45">Livestream</p><h1 className="font-display mt-1 text-[1.6rem] leading-tight sm:text-[2.1rem]">{details?.event?.name ?? event.name ?? 'Event'}</h1></div>
-      {streams.length > 1 && <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Streams">{streams.map((entry: any, index: number) => <button key={entry.videoId} role="tab" aria-selected={entry.videoId === videoId} onClick={() => switchStream(entry.videoId)} className={`border px-3 py-1.5 text-xs font-semibold ${entry.videoId === videoId ? 'border-[var(--c-accent)] bg-[var(--c-accent)] text-[var(--c-on-accent)]' : 'border-white/15 text-white/60 hover:text-white'}`}>Stream {index + 1}</button>)}</div>}
+      {streams.length > 1 && <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Streams">{streams.map((entry: any, index: number) => <button key={entry.videoId} role="tab" aria-selected={entry.videoId === videoId} onClick={() => switchStream(entry.videoId)} className={`border px-3 py-1.5 text-xs font-semibold ${entry.videoId === videoId ? 'border-[var(--c-accent)] bg-[var(--c-accent)] text-[var(--c-on-accent)]' : 'border-white/15 text-white/60 hover:text-white'}`}>{streamLabel(entry, index, streams)}</button>)}</div>}
     </div>
 
     <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_400px]">
@@ -303,14 +319,14 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
           </div>
           {/* Now playing, and the matches either side of it. */}
           {videoId && <div className="flex items-center gap-2 border-x border-b border-white/10 bg-[var(--c-surface)] px-3 py-2">
-            <button onClick={() => step(-1)} disabled={!onThisStream.length} aria-label="Previous match" className="flex h-9 items-center gap-1 border border-white/10 px-2 text-xs text-white/70 hover:text-white disabled:opacity-30"><ChevronLeft className="h-4 w-4" /><span className="hidden sm:inline">Prev</span></button>
+            <button onClick={() => step(-1)} disabled={!watchable.length} aria-label="Previous match" className="flex h-9 items-center gap-1 border border-white/10 px-2 text-xs text-white/70 hover:text-white disabled:opacity-30"><ChevronLeft className="h-4 w-4" /><span className="hidden sm:inline">Prev</span></button>
             <div className="min-w-0 flex-1 text-center">
               {now ? <>
                 <p className="text-[10px] font-semibold uppercase tracking-[.16em] text-white/45">{live ? 'Now playing' : 'After'}</p>
                 <p className="truncate text-sm font-semibold">{now.match.name}{multipleDivisions ? ` · ${now.match.division?.name}` : ''} <span className="font-mono text-xs font-normal text-red-300">{teamsOf(side(now.match, 'red')).join(' ')}</span> <span className="text-white/40">vs</span> <span className="font-mono text-xs font-normal text-blue-300">{teamsOf(side(now.match, 'blue')).join(' ')}</span></p>
               </> : <p className="text-xs text-white/50">{timed ? 'Pick a match to jump to it' : 'Matches get jumps once this stream is synced'}</p>}
             </div>
-            <button onClick={() => step(1)} disabled={!onThisStream.length} aria-label="Next match" className="flex h-9 items-center gap-1 border border-white/10 px-2 text-xs text-white/70 hover:text-white disabled:opacity-30"><span className="hidden sm:inline">Next</span><ChevronRight className="h-4 w-4" /></button>
+            <button onClick={() => step(1)} disabled={!watchable.length} aria-label="Next match" className="flex h-9 items-center gap-1 border border-white/10 px-2 text-xs text-white/70 hover:text-white disabled:opacity-30"><span className="hidden sm:inline">Next</span><ChevronRight className="h-4 w-4" /></button>
           </div>}
         </div>
 
@@ -347,7 +363,7 @@ export function LivestreamPage({ event, details, initialMatchId, initialTeam, go
         <details className="border border-white/10 bg-[var(--c-surface)] px-4 py-3 text-sm">
           <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[.16em] text-white/50">Stream links</summary>
           <div className="mt-3 space-y-2 text-xs">
-            {streams.map((entry: any, index: number) => <a key={entry.videoId} href={watchUrl(entry.videoId)} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-white/65 hover:text-white">Stream {index + 1} on YouTube <ArrowUpRight className="h-3.5 w-3.5" /></a>)}
+            {streams.map((entry: any, index: number) => <a key={entry.videoId} href={watchUrl(entry.videoId)} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-white/65 hover:text-white">{streamLabel(entry, index, streams)} on YouTube <ArrowUpRight className="h-3.5 w-3.5" /></a>)}
             {others.map(url => <a key={url} href={url} target="_blank" rel="noreferrer" className="flex items-center gap-2 break-all text-white/65 hover:text-white">{url} <ArrowUpRight className="h-3.5 w-3.5 shrink-0" /></a>)}
             <form onSubmit={async event => { event.preventDefault(); if (!link.trim()) return; const result = await add(link.trim()); setMessage(result.problem ?? 'Stream added.'); if (result.videoId) { setLink(''); switchStream(result.videoId); } }} className="flex gap-1.5 pt-1">
               <input value={link} onChange={event => setLink(event.target.value)} placeholder="Add a YouTube stream link" aria-label="Add a YouTube stream link" className="min-w-0 flex-1 border border-white/15 bg-black/30 px-2 py-2 placeholder:text-white/40" />

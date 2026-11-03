@@ -243,7 +243,7 @@ struct JumperPanel: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             ForEach(Array(jumper.streams.enumerated()), id: \.element.id) { index, stream in
-                                Button("Stream \(index + 1)") { jumper.show(stream.videoId) }
+                                Button(StreamJumper.label(for: stream, index: index, in: jumper.streams)) { jumper.show(stream.videoId) }
                                     .buttonStyle(.bordered)
                                     .tint(stream.videoId == current.videoId ? theme.accent : .secondary)
                                     .font(.caption2.weight(.semibold))
