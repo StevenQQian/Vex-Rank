@@ -67,6 +67,8 @@ public struct MatchTime: Sendable, Hashable {
 public struct Dropout: Sendable, Hashable {
     public let at: Date
     public let seconds: Double
+    /// Placed by viewers' corrections rather than guessed from the pauses.
+    public var confirmed: Bool = false
 }
 
 /// One stream's mapping from the clock to the video.
@@ -199,8 +201,10 @@ public enum StreamJumper {
         return times
     }
 
-    /// Where YouTube's archive left out time the stream was down.
-    public static func placeDropouts(start: Date, end: Date, duration: Double, times: [Date]) -> [Dropout] {
+    /// Where YouTube's archive left out time the stream was down. Without
+    /// evidence, in the longest pauses; with corrections (`marks`), in the
+    /// pause that agrees with them - one mark after the true dropout moves it there.
+    public static func placeDropouts(start: Date, end: Date, duration: Double, times: [Date], marks: [(t: Date, seconds: Double)] = []) -> [Dropout] {
         let missing = end.timeIntervalSince(start) - duration
         guard missing > 20 else { return [] }
         let played = times.filter { $0 >= start && $0 <= end }.sorted()
@@ -213,6 +217,21 @@ public enum StreamJumper {
         }
         slots.append(Slot(at: nil, room: end.timeIntervalSince(last) - matchLength, weight: 0.5))
         slots.sort { $0.room * $0.weight > $1.room * $1.weight }
+        let useful = marks.filter { $0.t >= start && $0.t <= end }
+        if !useful.isEmpty {
+            func misfit(_ at: Date?) -> Double {
+                useful.reduce(0) { sum, mark in
+                    let shifted = mark.t.timeIntervalSince(start) - ((at.map { $0 <= mark.t } ?? false) ? missing : 0)
+                    return sum + min(600, abs(mark.seconds - shifted))
+                }
+            }
+            var best: (slot: Slot, score: Double)?
+            for slot in slots where slot.room >= missing * 0.9 {
+                let score = misfit(slot.at)
+                if best == nil || score < best!.score - 1 { best = (slot, score) } // ties keep the likelier pause
+            }
+            if let best { return best.slot.at.map { [Dropout(at: $0, seconds: missing, confirmed: true)] } ?? [] }
+        }
         var gaps: [Dropout] = [], left = missing
         for slot in slots where left > 0 {
             let take = min(max(0, slot.room), left)
@@ -229,15 +248,16 @@ public enum StreamJumper {
     public static func timeline(for stream: EventStream, times: [Int: MatchTime]) -> StreamTimeline? {
         let start = time(stream.startTime), end = time(stream.endTime)
         let duration = (stream.duration ?? 0) > 0 ? stream.duration : nil
+        let raw = stream.allAnchors.compactMap { anchor -> (t: Date, seconds: Double)? in
+            guard let t = times[anchor.matchId]?.time, anchor.seconds >= 0 else { return nil }
+            return (t, anchor.seconds)
+        }
+        // Corrections first say where the dropout was; what they still disagree by is a correction proper.
         var dropouts: [Dropout] = []
-        if let start, let end, let duration { dropouts = placeDropouts(start: start, end: end, duration: duration, times: times.values.map(\.time)) }
+        if let start, let end, let duration { dropouts = placeDropouts(start: start, end: end, duration: duration, times: times.values.map(\.time), marks: raw) }
         let base = start.map { (start: $0, dropouts: dropouts) }
         let probe = StreamTimeline(origin: start ?? .distantPast, end: end, duration: duration, dropouts: dropouts, corrections: 0, automatic: start != nil, base: base, marks: [])
-        let marks = stream.allAnchors
-            .compactMap { anchor -> (t: Date, seconds: Double)? in
-                guard let t = times[anchor.matchId]?.time, anchor.seconds >= 0 else { return nil }
-                return (t, anchor.seconds)
-            }
+        let marks = raw
             .filter { mark in probe.baseSeconds(mark.t).map { abs(mark.seconds - $0) <= correctionLimit } ?? true }
             .sorted { $0.t < $1.t }
         if base == nil && marks.isEmpty { return nil }

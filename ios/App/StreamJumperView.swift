@@ -273,7 +273,10 @@ struct JumperPanel: View {
                     .font(.caption2).foregroundStyle(.secondary)
                 if let dropouts = timeline?.dropouts, !dropouts.isEmpty {
                     let minutes = Int((dropouts.reduce(0) { $0 + $1.seconds } / 60).rounded())
-                    Text("YouTube's video is missing \(minutes) min the stream was down\(dropouts.count == 1 ? ", taken to be in the pause before the match at \(dropouts[0].at.formatted(date: .omitted, time: .shortened))" : ", spread over the longest pauses"). Matches after it are placed from the end of the video.")
+                    let when = dropouts[0].at.formatted(date: .omitted, time: .shortened)
+                    Text(dropouts[0].confirmed
+                         ? "The stream was down for \(minutes) min before the match at \(when) (placed by viewers' corrections). YouTube's video leaves that out, and the jumps allow for it."
+                         : "The stream was down for \(minutes) min, which YouTube's video leaves out. When is not known: it is taken to be the pause before the match at \(when). If a match lands about \(minutes) min off, mark where it really starts - that places the dropout for every match.")
                         .font(.caption2).foregroundStyle(.orange)
                 }
                 if nudge != 0, let name = current.match {

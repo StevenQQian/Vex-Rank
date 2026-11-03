@@ -139,8 +139,15 @@ export function matchTimes(byId, { eventStart, eventEnd } = {}) {
 /**
  * Where YouTube's archive left out time the stream was down: [{ at, seconds }],
  * each shifting every match from `at` on. See the note at the top.
+ *
+ * Without evidence, the missing time goes in the longest pauses. With
+ * corrections (`marks`, [{ t, seconds }] - a match's clock time and where a
+ * viewer saw it start), each pause that could hold all of it is tried, and the
+ * one that agrees with the marks wins: one mark after the true dropout moves
+ * it there for every match. (Caution Tape, 2026: 14 minutes missing; the
+ * longest pause was lunch, but the stream was down during alliance selection.)
  */
-export function placeDropouts(start, end, duration, times) {
+export function placeDropouts(start, end, duration, times, marks = []) {
   const missing = (end - start) / 1000 - duration;
   if (!(missing > 20)) return [];
   const played = times.filter(t => t >= start && t <= end).sort((a, b) => a - b);
@@ -152,6 +159,19 @@ export function placeDropouts(start, end, duration, times) {
   }
   slots.push({ at: Infinity, room: (end - played.at(-1) - MATCH_MS) / 1000, weight: 0.5 });
   slots.sort((a, b) => b.room * b.weight - a.room * a.weight);
+
+  const useful = marks.filter(mark => mark.t >= start && mark.t <= end);
+  if (useful.length) {
+    const misfit = (at) => useful.reduce((sum, mark) => sum + Math.min(600, Math.abs(mark.seconds - ((mark.t - start) / 1000 - (at <= mark.t ? missing : 0)))), 0);
+    let best = null;
+    for (const slot of slots) {
+      if (slot.room < missing * 0.9) continue;
+      const score = misfit(slot.at);
+      if (!best || score < best.score - 1) best = { slot, score }; // ties keep the likelier pause
+    }
+    if (best) return best.slot.at === Infinity ? [] : [{ at: best.slot.at, seconds: missing, confirmed: true }];
+  }
+
   const gaps = [];
   let left = missing;
   for (const slot of slots) {
@@ -173,11 +193,13 @@ export function streamTimeline(stream, times, anchors = []) {
   const start = parse(stream.startTime), end = parse(stream.endTime);
   const duration = Number(stream.duration);
   const all = [...times.values()].map(entry => entry.time);
-  const gaps = start !== null && end !== null && duration > 0 ? placeDropouts(start, end, duration, all) : [];
-  const base = start === null ? null : (t) => (t - start) / 1000 - gaps.reduce((sum, gap) => sum + (gap.at <= t ? gap.seconds : 0), 0);
-  const marks = anchors
+  const raw = anchors
     .map(anchor => ({ t: times.get(Number(anchor.matchId))?.time, seconds: Number(anchor.seconds) }))
-    .filter(mark => Number.isFinite(mark.t) && Number.isFinite(mark.seconds) && mark.seconds >= 0)
+    .filter(mark => Number.isFinite(mark.t) && Number.isFinite(mark.seconds) && mark.seconds >= 0);
+  // Corrections first say where the dropout was; what they still disagree by is a correction proper.
+  const gaps = start !== null && end !== null && duration > 0 ? placeDropouts(start, end, duration, all, raw) : [];
+  const base = start === null ? null : (t) => (t - start) / 1000 - gaps.reduce((sum, gap) => sum + (gap.at <= t ? gap.seconds : 0), 0);
+  const marks = raw
     .filter(mark => !base || Math.abs(mark.seconds - base(mark.t)) <= CORRECTION_LIMIT)
     .sort((a, b) => a.t - b.t);
   if (!base && !marks.length) return null;

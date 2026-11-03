@@ -110,4 +110,23 @@ final class StreamJumperTests: XCTestCase {
         XCTAssertEqual(d[2]?.videoId, "pm")
         XCTAssertEqual(StreamJumper.videoTime(3725), "1:02:05")
     }
+
+    func testACorrectionMovesTheDropoutToWhereItHappened() throws {
+        // Caution Tape's shape: lunch is the longest pause, but 14 minutes went
+        // missing during alliance selection (16:05-16:40).
+        var rows = day().filter { ($0["started"] as! String) <= at("16:00:00") }
+        var id = 500
+        for m in stride(from: 1000, through: 1080, by: 5) { var entry = row(id, clock(m), clock(m)); entry["round"] = 6; rows.append(entry); id += 1 }
+        let d = try divisions(rows)
+        let afterLunch = rows.first { $0["started"] as? String == at("13:00:00") }!["id"] as! Int
+        let afternoon = rows.first { $0["started"] as? String == at("15:00:00") }!["id"] as! Int
+        var stream = EventStream(videoId: "v1", startTime: at("09:00:00"), endTime: at("18:30:00"), duration: 9.5 * 3600 - 14 * 60)
+        XCTAssertEqual(jumps(d, [stream]).jumps[afterLunch]?.seconds, 4 * 3600 - 14 * 60, "unaided: lunch")
+        stream.anchors = [.init(matchId: afterLunch, seconds: Double(4 * 3600))]
+        let told = jumps(d, [stream])
+        XCTAssertEqual(told.jumps[afterLunch]?.seconds, 4 * 3600)
+        XCTAssertEqual(told.jumps[afternoon]?.seconds, 6 * 3600)
+        XCTAssertEqual(told.jumps[500]?.seconds, (1000 - 540) * 60 - 14 * 60)
+        XCTAssertEqual(told.timelines["v1"]?.dropouts.first?.confirmed, true)
+    }
 }

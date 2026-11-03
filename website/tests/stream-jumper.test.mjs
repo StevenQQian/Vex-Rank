@@ -71,6 +71,23 @@ test('a dropout over lunch: the first half from the start, the second half from 
   assert.ok(Math.abs(j.jumpFor(last.id).seconds - (7 * 3600 - 3600)) <= 150);
 });
 
+test('a correction moves the dropout to the pause it actually happened in', () => {
+  // Caution Tape's shape: the longest pause is lunch, but 14 minutes went
+  // missing during alliance selection (16:05-16:40), before the eliminations.
+  const matches = day().filter(m => Date.parse(m.started) <= Date.parse(at('16:00:00')));
+  let id = 500; for (let m = 1000; m <= 1080; m += 5) matches.push(match(id++, clock(m), clock(m), { round: 6 }));
+  const afterLunch = matches.find(m => m.started === at('13:00:00')), firstElim = matches.find(m => m.id === 500);
+  const stream = { videoId: 'v1', startTime: at('09:00:00'), endTime: at('18:30:00'), duration: 9.5 * 3600 - 14 * 60 };
+  const guessed = jumper(event(matches), [stream]);
+  assert.equal(guessed.jumpFor(afterLunch.id).seconds, 4 * 3600 - 14 * 60 + 0, 'unaided, the missing time goes in the longest pause: lunch');
+  // A viewer finds the first match after lunch where the clock says it is.
+  const told = jumper(event(matches), [{ ...stream, anchors: [{ matchId: afterLunch.id, seconds: 4 * 3600 }] }]);
+  assert.equal(told.jumpFor(afterLunch.id).seconds, 4 * 3600);
+  assert.equal(told.jumpFor(matches.find(m => m.started === at('15:00:00')).id).seconds, 6 * 3600, 'the afternoon is now right too');
+  assert.equal(told.jumpFor(firstElim.id).seconds, (1000 - 540) * 60 - 14 * 60, 'and the eliminations are still placed from the end');
+  assert.equal(told.timelineOf('v1').corrections, 1);
+});
+
 test('more missing than every pause holds: the start of the archive is gone', () => {
   const times = day().map(m => Date.parse(m.started));
   const gaps = placeDropouts(Date.parse(at('09:25:00')), Date.parse(at('16:05:00')), 3 * 3600, times);
