@@ -120,6 +120,10 @@ struct TeamProfileView: View {
         }
         .task {
             await model.load(ref: ref, ranking: ranking, program: program)
+            // For You (UsageLog.swift): kept on this device only.
+            UsageLog.shared.record(UsageRecord(kind: .team, key: number, label: number,
+                                               place: TeamLocation.best(of: [model.profile?.team.region, row?.region]),
+                                               program: program.rawValue))
         }
         // The season on screen, whichever way it was chosen - the picker, the
         // launch argument, or the default of the newest season the team

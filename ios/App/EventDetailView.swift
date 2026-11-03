@@ -102,6 +102,12 @@ struct EventDetailView: View {
         }
         .task {
             await model.load(id: event.id)
+            // For You (UsageLog.swift): kept on this device only.
+            if let detail = model.detail {
+                UsageLog.shared.record(UsageRecord(kind: .event, key: event.id, label: detail.event.name,
+                                                   place: detail.event.venueLine.isEmpty ? event.place : detail.event.venueLine,
+                                                   program: detail.isIQ ? Program.viqrc.rawValue : Program.v5rc.rawValue))
+            }
             // While matches are still to be played, keep it current without
             // asking the reader to pull. Stops on its own once the schedule is
             // finished, and the task is cancelled when the screen goes away.

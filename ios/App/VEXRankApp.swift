@@ -10,6 +10,7 @@ struct VEXRankApp: App {
     @State private var eventPath = NavigationPath()
     @State private var statPath = NavigationPath()
     @State private var teamsPath = NavigationPath()
+    @State private var forYouPath = NavigationPath()
     /// `-tab teams` opens on that tab. Seeded as the State's initial value,
     /// not assigned on appear, for the same reason the profile's season is:
     /// an assignment made as the view settles can be lost.
@@ -48,6 +49,7 @@ struct VEXRankApp: App {
         case "events": return 1
         case "stats": return 2
         case "teams": return 3
+        case "foryou": return 4
         default: return launchEvent == nil ? 0 : 1
         }
     }
@@ -111,6 +113,19 @@ struct VEXRankApp: App {
                 .serviceBanner(config)
                 .tabItem { Label("Teams", systemImage: "person.3") }
                 .tag(3)
+
+                NavigationStack(path: $forYouPath) {
+                    ForYouView()
+                        .navigationTitle("For You")
+                        .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
+                        .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
+                        .navigationDestination(for: TeamEventRef.self) { TeamEventMatchesView(ref: $0) }
+                        .navigationDestination(for: MatchRef.self) { MatchDetailView(ref: $0) }
+                        .toolbar { teamBadge; themeMenu }
+                }
+                .serviceBanner(config)
+                .tabItem { Label("For You", systemImage: "sparkles") }
+                .tag(4)
             }
             .task {
                 // The stored config is already in hand from `init`, so this is
@@ -182,7 +197,7 @@ struct VEXRankApp: App {
             guard code != programID else { return }
             VEXRankAPI.shared.use(Program.named(code))
             path = NavigationPath(); eventPath = NavigationPath()
-            statPath = NavigationPath(); teamsPath = NavigationPath()
+            statPath = NavigationPath(); teamsPath = NavigationPath(); forYouPath = NavigationPath()
             programID = code
         })
     }

@@ -243,6 +243,9 @@ struct TeamEventMatchesView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             await model.load(ref)
+            // For You (UsageLog.swift): kept on this device only.
+            UsageLog.shared.record(UsageRecord(kind: .teamAtEvent, key: "\(ref.event.id)|\(ref.team)", label: ref.team,
+                                               place: ref.event.place, program: model.isIQ ? Program.viqrc.rawValue : Program.v5rc.rawValue))
             while !Task.isCancelled && (model.record?.remaining ?? 0) > 0 {
                 try? await Task.sleep(for: .seconds(45))
                 guard !Task.isCancelled else { break }
