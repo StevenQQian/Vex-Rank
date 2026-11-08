@@ -9,6 +9,9 @@ struct TeamsDirectoryView: View {
     @Environment(\.favouriteTeams) private var favourites
     @Environment(\.program) private var program
     @State private var model = TeamsDirectoryModel()
+    /// Set once the list first shows, so its opening rows rise in order;
+    /// rows made after that (scrolling, refiltering) are simply there.
+    @State private var entered = false
     @State private var scope: Scope = .favourites
     @State private var query = ""
 
@@ -58,12 +61,12 @@ struct TeamsDirectoryView: View {
         }
         if favourites.teams.isEmpty {
             ContentUnavailableView {
-                Label("No favourite teams yet", systemImage: "star")
+                Label("No favourite teams yet", icon: .star, size: 48, relativeTo: .largeTitle, drawsOn: true)
             } description: {
                 Text("Star a team from its profile, or swipe a row in All teams, and it will be waiting here.")
             } actions: {
                 Button("Browse all teams") { scope = .all }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent).controlSize(.large)
                     .tint(theme.accent)
                     .foregroundStyle(theme.onAccent)
             }
@@ -91,7 +94,7 @@ struct TeamsDirectoryView: View {
                         Button(role: .destructive) {
                             favourites.remove(team.number)
                         } label: {
-                            Label("Remove", systemImage: "star.slash")
+                            Label { Text("Remove") } icon: { VEXIcon.starSlash.image(size: 22) }
                         }
                     }
                 }
@@ -107,20 +110,16 @@ struct TeamsDirectoryView: View {
             switch model.state {
             case .loading:
                 // The directory is ~11MB, so this is a wait worth explaining.
-                VStack(spacing: 8) {
-                    ProgressView()
-                    Text("Loading every team on record…")
-                        .font(.footnote).foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                PlaceholderList(badge: false, lines: 2, trailing: false,
+                                caption: "Loading every team on record…")
             case .failed(let message):
                 ContentUnavailableView {
-                    Label("Could not load the directory", systemImage: "wifi.exclamationmark")
+                    Label("Could not load the directory", icon: .offline, size: 48, relativeTo: .largeTitle, drawsOn: true)
                 } description: {
                     Text(message)
                 } actions: {
-                    Button("Retry") { Task { await model.load(program: program) } }
-                        .buttonStyle(.borderedProminent)
+                    Button("Retry") { Task { await model.load(program: program, force: true) } }
+                        .buttonStyle(.borderedProminent).controlSize(.large)
                         .tint(theme.accent)
                         .foregroundStyle(theme.onAccent)
                 }
@@ -133,7 +132,7 @@ struct TeamsDirectoryView: View {
                     if results.isEmpty, query.trimmingCharacters(in: .whitespaces).isEmpty {
                         // Filters alone emptied it; "No results for ''" says nothing.
                         ContentUnavailableView {
-                            Label("No teams match", systemImage: "line.3.horizontal.decrease.circle")
+                            Label("No teams match", icon: .filter, size: 48, relativeTo: .largeTitle, drawsOn: true)
                         } description: {
                             Text("No team on record meets these filters.")
                         } actions: {
@@ -158,13 +157,13 @@ struct TeamsDirectoryView: View {
             // States", a long region, a grade) do not fit one phone width.
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
-                    menu(country ?? "All countries", "globe", country != nil, model.countries, "All countries") {
+                    menu(country ?? "All countries", .globe, country != nil, model.countries, "All countries") {
                         country = $0
                         // A region from the previous country would match nothing.
                         region = nil
                     }
-                    menu(region ?? "All regions", "map", region != nil, model.regions(in: country), "All regions") { region = $0 }
-                    menu(grade ?? "All levels", "graduationcap", grade != nil, program.grades, "All levels") { grade = $0 }
+                    menu(region ?? "All regions", .map, region != nil, model.regions(in: country), "All regions") { region = $0 }
+                    menu(grade ?? "All levels", .grade, grade != nil, program.grades, "All levels") { grade = $0 }
                 }
                 .padding(.horizontal, 16)
             }
@@ -182,21 +181,22 @@ struct TeamsDirectoryView: View {
         .padding(.vertical, 10)
     }
 
-    private func menu(_ title: String, _ icon: String, _ isActive: Bool, _ options: [String], _ reset: String,
+    private func menu(_ title: String, _ icon: VEXIcon, _ isActive: Bool, _ options: [String], _ reset: String,
                       select: @escaping (String?) -> Void) -> some View {
         Menu {
-            Button(reset) { select(nil) }
+            Button(reset) { Haptics.selection(); select(nil) }
             ForEach(options, id: \.self) { option in
-                Button(option) { select(option) }
+                Button(option) { Haptics.selection(); select(option) }
             }
         } label: {
             FilterPill(title, icon: icon, isActive: isActive)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
     }
 
     private func list(_ teams: [DirectoryTeam]) -> some View {
-        List(teams) { team in
+        let order = Dictionary(teams.prefix(10).enumerated().map { ($1.id, $0) }) { a, _ in a }
+        return List(teams) { team in
             NavigationLink(value: TeamRef(team.number)) {
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
@@ -216,18 +216,21 @@ struct TeamsDirectoryView: View {
                 }
                 .padding(.vertical, 2)
             }
-            .listRowBackground(theme.surface)
+            .entrance(order[team.id] ?? 10, shown: entered)
+                .listRowBackground(theme.surface)
             .swipeActions {
                 Button {
                     favourites.toggle(FavouriteTeam(number: team.number, name: team.name))
                 } label: {
-                    Label(favourites.contains(team.number) ? "Unstar" : "Star",
-                          systemImage: favourites.contains(team.number) ? "star.slash" : "star")
+                    Label { Text(favourites.contains(team.number) ? "Unstar" : "Star") } icon: {
+                        (favourites.contains(team.number) ? VEXIcon.starSlash : .star).image(size: 22)
+                    }
                 }
                 .tint(theme.accent)
             }
         }
         .listStyle(.plain)
+        .task { entered = true }
         .scrollContentBackground(.hidden)
     }
 }
@@ -264,8 +267,19 @@ final class TeamsDirectoryModel {
         (teams.map { ($0, TeamDirectory.haystack($0)) }, TeamDirectory.locations(teams).countries)
     }
 
+    /// Remembered answers, so a redraw that asks the same question again -
+    /// an animation frame, a sheet closing, the keyboard moving - does not
+    /// search 56,000 teams again. Ignored by observation: filling them in
+    /// from a view's body must not itself schedule another body.
+    @ObservationIgnored private var lastSearch: (key: String, results: [DirectoryTeam])?
+    @ObservationIgnored private var regionCache: [String: [String]] = [:]
+
+    /// Loads once. Coming back to the tab used to throw the directory away
+    /// and fetch, decode and index all 11MB of it again behind a spinner;
+    /// `force` is for the retry button.
     @MainActor
-    func load(program: Program = .v5rc) async {
+    func load(program: Program = .v5rc, force: Bool = false) async {
+        if state.isLoaded && !force { return }
         state = .loading
         do {
             let response = try await api.teamDirectory()
@@ -280,6 +294,8 @@ final class TeamsDirectoryModel {
             }.value
             teams = response.teams
             indexed = built.rows
+            lastSearch = nil
+            regionCache = [:]
             countries = built.countries
             total = response.total
             updated = response.updated
@@ -293,10 +309,18 @@ final class TeamsDirectoryModel {
     }
 
     func regions(in country: String?) -> [String] {
-        TeamDirectory.locations(teams, country: country).regions
+        let key = country ?? ""
+        if let known = regionCache[key] { return known }
+        let found = TeamDirectory.locations(teams, country: country).regions
+        regionCache[key] = found
+        return found
     }
 
     func search(query: String, filters: TeamDirectory.Filters) -> [DirectoryTeam] {
-        TeamDirectory.search(indexed, query: query, filters: filters)
+        let key = "\(query)|\(filters.country ?? "")|\(filters.region ?? "")|\(filters.grade ?? "")"
+        if let lastSearch, lastSearch.key == key { return lastSearch.results }
+        let results = TeamDirectory.search(indexed, query: query, filters: filters)
+        lastSearch = (key, results)
+        return results
     }
 }

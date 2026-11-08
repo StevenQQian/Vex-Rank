@@ -12,6 +12,7 @@ struct TeamEventMatchesView: View {
     @State private var jumper = JumperModel()
     /// Matches, or the stats drawn from them (strengths, momentum).
     @State private var tab: Tab = .matches
+    @State private var stripShown = false
 
     private enum Tab: String, CaseIterable, Identifiable {
         case matches = "Matches"
@@ -30,6 +31,14 @@ struct TeamEventMatchesView: View {
                 .listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
             }
 
+            if tab == .matches, let detail = model.detail,
+               TournamentModeCard.isAvailable(team: ref.team, detail: detail) {
+                Section {
+                    TournamentModeCard(team: ref.team, event: ref.event, detail: detail)
+                }
+                .listRowBackground(theme.surface)
+            }
+
             if tab == .matches, let record = model.record {
                 Section {
                     VStack(alignment: .leading, spacing: 14) {
@@ -42,6 +51,10 @@ struct TeamEventMatchesView: View {
                                     .font(.system(size: 34, weight: .bold, design: .rounded))
                                     .foregroundStyle(theme.accent)
                                     .monospacedDigit()
+                                    // The page refreshes every 45 seconds at a
+                                    // live event; a moving rank rolls.
+                                    .contentTransition(.numericText())
+                                    .animation(VEXMotion.snap, value: standing.rank)
                                 VStack(alignment: .leading, spacing: 1) {
                                     Text("QUALIFICATION RANK")
                                         .font(.caption2.weight(.semibold)).tracking(1.2)
@@ -53,12 +66,16 @@ struct TeamEventMatchesView: View {
                                     Text(standing.record)
                                         .font(.system(.title3, design: .rounded, weight: .semibold))
                                         .monospacedDigit()
+                                        .contentTransition(.numericText())
+                                        .animation(VEXMotion.snap, value: standing.record)
                                     Text(record.remaining == 0
                                          ? "Schedule complete"
                                          : "\(record.remaining) still to play")
                                         .font(.caption2).foregroundStyle(.secondary)
                                 }
                             }
+
+                            matchStrip
 
                             Divider().overlay(Color.hairline)
 
@@ -220,7 +237,30 @@ struct TeamEventMatchesView: View {
                 }
                 .listRowBackground(theme.surface)
             } else if model.record == nil {
-                Section { ProgressView() }.listRowBackground(theme.surface)
+                // The standing card, then the match rows, in the places
+                // they will take.
+                Section {
+                    HStack(spacing: 12) {
+                        PlaceholderBlock(width: 56, height: 36, radius: 8)
+                        VStack(alignment: .leading, spacing: 6) {
+                            PlaceholderBlock(width: 120, height: 10)
+                            PlaceholderBlock(width: 80, height: 10)
+                        }
+                        Spacer()
+                        PlaceholderBlock(width: 64, height: 20)
+                    }
+                    .padding(.vertical, 6)
+                    .shimmering()
+                }
+                .listRowBackground(theme.surface)
+                .loadingPlaceholder()
+                Section {
+                    ForEach(0..<5, id: \.self) { row in
+                        PlaceholderRow(badge: false, lines: 2, seed: row).shimmering()
+                    }
+                }
+                .listRowBackground(theme.surface)
+                .loadingPlaceholder()
             } else if model.played.isEmpty && model.upcoming.isEmpty && model.iqPlayed.isEmpty && model.iqUpcoming.isEmpty {
                 Section {
                     Text("No matches are listed for \(ref.team) at this event.")
@@ -248,6 +288,46 @@ struct TeamEventMatchesView: View {
                 guard !Task.isCancelled else { break }
                 await model.load(ref, force: true)
             }
+        }
+    }
+
+    /// The team's qualification schedule as a row of dots in playing order:
+    /// filled in won, lost or tied, hollow for what is still to come. The
+    /// run of a tournament at a glance, where the record only gives totals.
+    @ViewBuilder
+    private var matchStrip: some View {
+        let quals = (model.played + model.upcoming).filter(\.isQualification)
+        if quals.count > 1 {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 4) {
+                    ForEach(Array(quals.enumerated()), id: \.element.id) { index, match in
+                        Group {
+                            if match.isPlayed {
+                                Capsule().fill(colour(match.outcome))
+                            } else {
+                                Capsule().strokeBorder(Color.white.opacity(0.25), lineWidth: 1.5)
+                            }
+                        }
+                        .frame(height: 10)
+                        .frame(maxWidth: 22)
+                        .entrance(index, shown: stripShown)
+                    }
+                }
+                Text("\(quals.filter(\.isPlayed).count) of \(quals.count) qualifiers played")
+                    .font(.caption2).foregroundStyle(.secondary)
+            }
+            .onAppear { stripShown = true }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(quals.map { "\($0.name) \($0.isPlayed ? $0.outcome.rawValue : "to play")" }
+                .joined(separator: ", "))
+        }
+    }
+
+    private func colour(_ outcome: TeamMatch.Outcome) -> Color {
+        switch outcome {
+        case .won: return .win
+        case .lost: return .loss
+        default: return .gray
         }
     }
 

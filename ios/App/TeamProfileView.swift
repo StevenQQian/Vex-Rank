@@ -36,6 +36,8 @@ struct TeamProfileView: View {
     /// as the profile loads, and an assignment made from the task raced that -
     /// it ran, but the body never saw it. A State initial value survives.
     @State private var season: Int? = TeamProfileView.launchSeason
+    /// The trophy tiles rise in order the first time they are scrolled to.
+    @State private var awardsShown = false
 
     /// `-season 197` opens the profile on that season. The same hook as
     /// `-team` and `-event`: the picker cannot be driven without tapping, so
@@ -50,6 +52,10 @@ struct TeamProfileView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                    // Bled past the screen's padding and up under the bar, so
+                    // the glow reads as the page's light, not a box.
+                    .background(FieldBackdrop(accent: theme.accent)
+                        .padding(.horizontal, -20).padding(.top, -160).padding(.bottom, -40))
                 // The fade is scoped to the part that actually changes. On
                 // the whole VStack it also covered the signature, and an
                 // implicit animation there replaced the pen's own pending
@@ -84,12 +90,12 @@ struct TeamProfileView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text(message).font(.footnote).foregroundStyle(.secondary)
                             Button("Retry") { Task { await model.retry(ref: ref, ranking: ranking, program: program) } }
-                                .buttonStyle(.borderedProminent)
+                                .buttonStyle(.borderedProminent).controlSize(.large)
                                 .tint(theme.accent)
                                 .foregroundStyle(theme.onAccent)
                         }
                     } else {
-                        ProgressView().padding(.vertical, 20)
+                        ProfilePlaceholder()
                     }
                 }
                 .animation(.easeOut(duration: 0.45), value: model.profile == nil)
@@ -107,10 +113,15 @@ struct TeamProfileView: View {
                 Button {
                     favourites.toggle(FavouriteTeam(number: number, name: model.profile?.team.name))
                 } label: {
-                    Image(systemName: favourites.contains(number) ? "star.fill" : "star")
+                    // An image rather than a drawn view: the toolbar hosts its
+                    // items in UIKit and does not redraw a custom view inside
+                    // one. The swap is given a small overshoot instead, so
+                    // starring is still the moment.
+                    (favourites.contains(number) ? VEXIcon.starFilled : .star).image(size: 22)
                         .foregroundStyle(theme.accent)
-                        // The star fills in place rather than swapping glyphs.
-                        .contentTransition(.symbolEffect(.replace))
+                        .phaseAnimator([1.0, 1.3, 1.0], trigger: favourites.contains(number)) { star, scale in
+                            star.scaleEffect(scale)
+                        } animation: { _ in VEXMotion.press }
                 }
                 .accessibilityLabel(favourites.contains(number) ? "Remove from favourites" : "Add to favourites")
                 .sensoryFeedback(trigger: favourites.contains(number)) { _, starred in
@@ -141,11 +152,11 @@ struct TeamProfileView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(message).font(.footnote).foregroundStyle(.secondary)
                 Button("Retry") { Task { await model.ensure(season: season, number: number) } }
-                    .buttonStyle(.bordered)
+                    .buttonStyle(.bordered).controlSize(.large)
                     .tint(theme.accent)
             }
         } else {
-            ProgressView().frame(maxWidth: .infinity).padding(.vertical, 20)
+            ProfilePlaceholder()
         }
     }
 
@@ -179,7 +190,7 @@ struct TeamProfileView: View {
                         Text(organization).font(.footnote).foregroundStyle(.secondary)
                     }
                     if let region = location {
-                        Label(region, systemImage: "mappin.and.ellipse")
+                        Label(region, icon: .pin, size: 14, relativeTo: .footnote)
                             .font(.footnote)
                             .foregroundStyle(.subtle)
                             .labelStyle(.titleAndIcon)
@@ -190,7 +201,9 @@ struct TeamProfileView: View {
                 VStack(alignment: .trailing, spacing: 2) {
                     Text(standing.label).font(.caption2.weight(.semibold)).tracking(1.5)
                         .foregroundStyle(.secondary)
-                    Text(standing.value)
+                    Group {
+                        if let rating = standing.rating { CountingNumber(rating) } else { Text(standing.value) }
+                    }
                         .font(.system(size: standing.rating == nil ? (program.isIQ ? 20 : 26) : 40,
                                       weight: .bold, design: .rounded))
                         .monospacedDigit()
@@ -219,7 +232,7 @@ struct TeamProfileView: View {
             Menu {
                 // A check mark on the current one, so the menu says where you
                 // are as well as where you can go.
-                Picker("Season", selection: Binding(get: { selected }, set: { season = $0 })) {
+                Picker("Season", selection: Binding(get: { selected }, set: { Haptics.selection(); season = $0 })) {
                     ForEach(seasons) { Text($0.shortName).tag($0.id) }
                 }
             } label: {
@@ -232,17 +245,16 @@ struct TeamProfileView: View {
                             .foregroundStyle(.primary)
                     }
                     Spacer(minLength: 8)
-                    Image(systemName: "chevron.up.chevron.down")
-                        .font(.footnote.weight(.semibold))
+                    StrokeIcon(.chevronUpDown, size: 15, relativeTo: .footnote)
                         .foregroundStyle(theme.accent)
                 }
                 .vexCard(padding: 14)
                 .contentShape(Rectangle())
             }
             // A Menu tints its whole label with the accent, which turned the
-            // heading and the season name red; plain resets that, and the
-            // chevron opts back in.
-            .buttonStyle(.plain)
+            // heading and the season name red; a custom style resets that,
+            // the chevron opts back in, and the card sinks under the finger.
+            .buttonStyle(.pressable)
             .accessibilityLabel("Season")
         }
     }
@@ -292,18 +304,18 @@ struct TeamProfileView: View {
         if let url = OfficialLinks.team(number, program: program.rawValue) {
             Link(destination: url) {
                 HStack(spacing: 10) {
-                    Image(systemName: "safari").foregroundStyle(.secondary)
+                    StrokeIcon(.compass, size: 20).foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("View \(number) on events.vex.com")
                             .font(.subheadline.weight(.medium))
                         Text("Official team page").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 8)
-                    Image(systemName: "arrow.up.right").font(.caption).foregroundStyle(.subtle)
+                    StrokeIcon(.external, size: 13, relativeTo: .caption).foregroundStyle(.subtle)
                 }
                 .vexCard(padding: 14)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable)
         }
     }
 
@@ -315,18 +327,18 @@ struct TeamProfileView: View {
         if let event = ref.fromEvent, model.hasOriginMatches {
             NavigationLink(value: TeamEventRef(event: event, team: number)) {
                 HStack(spacing: 10) {
-                    Image(systemName: "list.bullet.rectangle")
+                    StrokeIcon(.list, size: 20)
                         .foregroundStyle(theme.accent)
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Matches at this event").font(.subheadline.weight(.medium))
                         Text(event.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
                     Spacer(minLength: 8)
-                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.subtle)
+                    StrokeIcon(.chevronRight, size: 13, relativeTo: .caption).foregroundStyle(.subtle)
                 }
                 .vexCard(padding: 14)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable)
         }
     }
 
@@ -343,10 +355,13 @@ struct TeamProfileView: View {
                     NavigationLink(value: event.ref.focused(on: number)) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(event.name).font(.subheadline.weight(.medium)).lineLimit(2)
-                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.subtle)
+                            StrokeIcon(.chevronRight, size: 11, relativeTo: .caption2).foregroundStyle(.subtle)
                         }
+                        // One line of text is a 20pt target; the event name
+                        // is the way in, so it gets a thumb's worth.
+                        .hitArea(vertical: 12)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressable)
                 }
                 // Teamwork: who they play with. No colour and no opponent.
                 ForEach(model.upcomingIQ) { match in
@@ -380,10 +395,13 @@ struct TeamProfileView: View {
                     NavigationLink(value: event.ref.focused(on: number)) {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
                             Text(event.name).font(.subheadline.weight(.medium)).lineLimit(2)
-                            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.subtle)
+                            StrokeIcon(.chevronRight, size: 11, relativeTo: .caption2).foregroundStyle(.subtle)
                         }
+                        // One line of text is a 20pt target; the event name
+                        // is the way in, so it gets a thumb's worth.
+                        .hitArea(vertical: 12)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressable)
                 }
 
                 ForEach(model.upcomingMatches) { match in
@@ -420,21 +438,104 @@ struct TeamProfileView: View {
         }
     }
 
+    /// The season as a picture first: how often they won, the shape of the
+    /// record, and the figures that say how far they got.
     private func seasonBand(_ profile: TeamProfileResponse, season: Int?) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            SectionHeader("Season summary")
-            let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 16) {
-                let events = profile.events?.filter { season == nil || $0.seasonId == season } ?? []
-                let awards = profile.awards?.filter { season == nil || $0.seasonId == season } ?? []
-                Metric("Status", profile.team.active ? "Active" : "Inactive",
-                       detail: season.map { profile.grade(forSeason: $0) } ?? "\(profile.team.currentSeasonEvents) current-season events")
-                Metric("Events", "\(events.count)", detail: "Official competitions")
-                Metric("Awards", "\(awards.count)", detail: "Official records")
-                Metric("Seasons", "\(profile.team.seasons)", detail: "Team history")
+        let events = profile.events?.filter { season == nil || $0.seasonId == season } ?? []
+        let awards = profile.awards?.filter { season == nil || $0.seasonId == season } ?? []
+        let standings = (profile.rankings ?? []).filter { season == nil || $0.seasonId == season }
+        let wins = standings.reduce(0) { $0 + $1.wins }
+        let losses = standings.reduce(0) { $0 + $1.losses }
+        let ties = standings.reduce(0) { $0 + $1.ties }
+        let played = wins + losses + ties
+        let bestRank = standings.map(\.rank).min()
+        let highScore = standings.compactMap(\.highScore).max()
+        let titles = events.filter { $0.eliminationResult?.localizedCaseInsensitiveContains("champion") == true
+            || $0.eliminationResult?.localizedCaseInsensitiveContains("winner") == true }.count
+
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                SectionHeader("Season at a glance")
+                Spacer()
+                Text(profile.team.active ? "ACTIVE" : "INACTIVE")
+                    .font(.caption2.weight(.bold)).tracking(1.2)
+                    .foregroundStyle(profile.team.active ? Color.win : .secondary)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background((profile.team.active ? Color.win : .white).opacity(0.12), in: Capsule())
+            }
+
+            // Teamwork matches in VEX IQ are shared, so there is no record to
+            // draw - the ring is for V5's won/lost.
+            if !program.isIQ, played > 0 {
+                HStack(spacing: 18) {
+                    RingGauge(fraction: Double(wins) / Double(played), colour: .win, lineWidth: 11) {
+                        VStack(spacing: 0) {
+                            CountingNumber(Int((Double(wins) / Double(played) * 100).rounded()), suffix: "%")
+                                .font(.system(size: 24, weight: .bold, design: .rounded))
+                            Text("WIN RATE").font(.system(size: 9, weight: .semibold)).tracking(1)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(width: 112, height: 112)
+                    .accessibilityElement(children: .combine)
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack(alignment: .firstTextBaseline, spacing: 10) {
+                            recordFigure(wins, "W", .win)
+                            recordFigure(losses, "L", .loss)
+                            recordFigure(ties, "T", .secondary)
+                        }
+                        RecordBar(wins: wins, losses: losses, ties: ties, height: 10)
+                        Text("\(played) qualification matches across \(standings.count) events")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+            }
+
+            let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
+            LazyVGrid(columns: columns, spacing: 10) {
+                tile(.calendar, "Events", events.count, detail: season.map { profile.grade(forSeason: $0) } ?? "This season")
+                tile(.trophy, "Awards", awards.count, detail: titles > 0 ? "\(titles) tournament win\(titles == 1 ? "" : "s")" : "Official records",
+                     colour: awards.isEmpty ? nil : .gold)
+                if let bestRank {
+                    tile(.podium, "Best qualifying", bestRank, prefix: "#", detail: "Highest seed", colour: Color.medal(bestRank))
+                } else {
+                    tile(.team, "Seasons", profile.team.seasons, detail: "Team history")
+                }
+                if let highScore {
+                    tile(.stats, "High score", highScore, detail: "One match")
+                } else {
+                    tile(.team, "Seasons", profile.team.seasons, detail: "Team history")
+                }
             }
         }
         .vexCard()
+    }
+
+    private func recordFigure(_ value: Int, _ label: String, _ colour: Color) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 2) {
+            CountingNumber(value).font(.system(size: 22, weight: .bold, design: .rounded))
+            Text(label).font(.caption.weight(.bold)).foregroundStyle(colour)
+        }
+    }
+
+    private func tile(_ icon: VEXIcon, _ label: String, _ value: Int, prefix: String = "",
+                      detail: String, colour: Color? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                StrokeIcon(icon, size: 14, relativeTo: .caption)
+                    .foregroundStyle(colour ?? theme.accent)
+                Text(label).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+            }
+            CountingNumber(value, prefix: prefix)
+                .font(.system(.title2, design: .rounded, weight: .bold))
+                .foregroundStyle(colour ?? .primary)
+            Text(detail).font(.caption2).foregroundStyle(.subtle).lineLimit(1)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 
     /// Where the rating line will go, in the same place and style.
@@ -455,7 +556,18 @@ struct TeamProfileView: View {
 
     private func chart(_ history: [RatingPoint]) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader("Rating movement", detail: "After each tournament")
+            HStack(alignment: .firstTextBaseline) {
+                SectionHeader("Rating movement", detail: "After each tournament")
+                Spacer()
+                let net = history.reduce(0) { $0 + $1.change }
+                Text("\(net >= 0 ? "+" : "")\(net)")
+                    .font(.system(.subheadline, design: .rounded, weight: .bold))
+                    .monospacedDigit()
+                    .foregroundStyle(net >= 0 ? Color.win : Color.loss)
+                    .padding(.horizontal, 10).padding(.vertical, 4)
+                    .background((net >= 0 ? Color.win : Color.loss).opacity(0.14), in: Capsule())
+                    .accessibilityLabel("\(net >= 0 ? "Up" : "Down") \(abs(net)) this season")
+            }
             GrowingRatingChart(history: history, accent: theme.accent)
                 .frame(height: 200)
             Text("The published ranking uses a rolling sample of the season's most recent events, so this line can run ahead of the rating in the table.")
@@ -476,15 +588,40 @@ extension TeamProfileView {
         let runs = (profile.skills ?? []).filter { season == nil || $0.seasonId == season }
         if !runs.isEmpty {
             let best = SeasonSkills(runs: runs)
+            let scale = Double(max(best.driver, best.programming, 1))
             card {
-                SectionHeader("Skills", detail: "Season best official scores")
-                HStack(alignment: .top, spacing: 14) {
-                    Metric("Driver", best.driver > 0 ? "\(best.driver)" : "—")
-                    Metric(program.isIQ ? "Coding" : "Auton", best.programming > 0 ? "\(best.programming)" : "—")
-                    Metric("Combined", best.combined > 0 ? "\(best.combined)" : "—", detail: "At one event")
+                HStack(alignment: .top) {
+                    SectionHeader("Skills", detail: "Season best official scores")
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 0) {
+                        CountingNumber(best.combined)
+                            .font(.system(size: 30, weight: .bold, design: .rounded))
+                            .foregroundStyle(theme.accent)
+                        Text("COMBINED").font(.system(size: 9, weight: .semibold)).tracking(1)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                skillBar(.robot, "Driver", best.driver, fraction: Double(best.driver) / scale, delay: 0)
+                skillBar(.settings, program.isIQ ? "Coding" : "Auton", best.programming,
+                         fraction: Double(best.programming) / scale, delay: 0.12)
+                Text("Combined is the best driver and \(program.isIQ ? "coding" : "auton") pair from one event.")
+                    .font(.caption2).foregroundStyle(.subtle)
             }
         }
+    }
+
+    private func skillBar(_ icon: VEXIcon, _ label: String, _ score: Int, fraction: Double, delay: Double) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                StrokeIcon(icon, size: 14, relativeTo: .footnote).foregroundStyle(.secondary)
+                Text(label).font(.subheadline.weight(.medium))
+                Spacer()
+                Text(score > 0 ? "\(score)" : "\u{2014}")
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold)).monospacedDigit()
+            }
+            LevelBar(fraction: fraction, colour: theme.accent, height: 8, delay: delay)
+        }
+        .accessibilityElement(children: .combine)
     }
 
     @ViewBuilder
@@ -495,43 +632,92 @@ extension TeamProfileView {
         if !events.isEmpty {
             card {
                 SectionHeader("Events", detail: "Results and qualification rank")
-                ForEach(events) { event in
-                    VStack(alignment: .leading, spacing: 5) {
-                        Divider().overlay(Color.hairline)
+                // No gaps between entries, so the rail runs unbroken.
+                VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(events.enumerated()), id: \.element.id) { index, event in
+                    HStack(alignment: .top, spacing: 12) {
+                        timelineRail(event: event, rank: standings(profile, eventID: event.id).first?.rank,
+                                     isFirst: index == 0, isLast: index == events.count - 1)
+                        // The whole entry is the link - name, place, result
+                        // and rank - so a thumb landing on any line of it
+                        // opens the event, not just one landing on the title.
                         NavigationLink(value: event.ref.focused(on: number)) {
-                            HStack(alignment: .firstTextBaseline) {
-                                Text(event.name).font(.subheadline.weight(.medium))
-                                Spacer(minLength: 8)
-                                if let day = event.day {
-                                    Text(day.formatted(.dateTime.month(.abbreviated).day()))
+                            VStack(alignment: .leading, spacing: 5) {
+                                HStack(alignment: .firstTextBaseline) {
+                                    Text(event.name).font(.subheadline.weight(.medium))
+                                    Spacer(minLength: 8)
+                                    if let day = event.day {
+                                        Text(day.formatted(.dateTime.month(.abbreviated).day()))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    StrokeIcon(.chevronRight, size: 11, relativeTo: .caption2)
+                                        .foregroundStyle(.subtle)
+                                }
+                                if let place = event.location, !place.isEmpty {
+                                    Text(place).font(.caption).foregroundStyle(.secondary)
+                                }
+                                if let result = event.eliminationResult {
+                                    Label {
+                                        Text(result).foregroundStyle(.primary)
+                                    } icon: {
+                                        StrokeIcon(.trophy, size: 13, relativeTo: .caption).foregroundStyle(theme.accent)
+                                    }
+                                    .font(.caption.weight(.semibold))
+                                }
+                                ForEach(standings(profile, eventID: event.id), id: \.self) { standing in
+                                    if !program.isIQ, standing.wins + standing.losses + standing.ties > 0 {
+                                        RecordBar(wins: standing.wins, losses: standing.losses,
+                                                  ties: standing.ties, height: 5)
+                                            .frame(maxWidth: 180)
+                                            .padding(.top, 2)
+                                    }
+                                    Text(program.isIQ
+                                         ? "Qualification #\(standing.rank) · high \(standing.highScore.map(String.init) ?? "\u{2014}")"
+                                         : "Qualification #\(standing.rank) · \(standing.record)")
                                         .font(.caption).foregroundStyle(.secondary)
                                 }
-                                Image(systemName: "chevron.right")
-                                    .font(.caption2).foregroundStyle(.subtle)
                             }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        if let place = event.location, !place.isEmpty {
-                            Text(place).font(.caption).foregroundStyle(.secondary)
-                        }
-                        if let result = event.eliminationResult {
-                            Label {
-                                Text(result).foregroundStyle(.primary)
-                            } icon: {
-                                Image(systemName: "trophy.fill").foregroundStyle(theme.accent)
-                            }
-                            .font(.caption.weight(.semibold))
-                        }
-                        ForEach(standings(profile, eventID: event.id), id: \.self) { standing in
-                            Text(program.isIQ
-                                 ? "Qualification #\(standing.rank) · high \(standing.highScore.map(String.init) ?? "\u{2014}")"
-                                 : "Qualification #\(standing.rank) · \(standing.record)")
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
+                        .buttonStyle(.pressable)
                     }
+                    .fixedSize(horizontal: false, vertical: true)
+                }
                 }
             }
         }
+    }
+
+    /// The line down the left of the events, with each event's qualifying
+    /// place set on it: medals for the top three, a trophy ring for an event
+    /// they won outright.
+    private func timelineRail(event: TeamEvent, rank: Int?, isFirst: Bool, isLast: Bool) -> some View {
+        let won = event.eliminationResult.map {
+            $0.localizedCaseInsensitiveContains("champion") || $0.localizedCaseInsensitiveContains("winner")
+        } ?? false
+        return VStack(spacing: 0) {
+            Rectangle().fill(isFirst ? Color.clear : Color.hairline).frame(width: 2, height: 10)
+            ZStack {
+                if let rank {
+                    PlaceBadge(rank, size: 34)
+                } else {
+                    Circle().fill(theme.surfaceRaised).frame(width: 14, height: 14)
+                        .overlay(Circle().strokeBorder(Color.hairline, lineWidth: 2))
+                        .frame(width: 34, height: 20)
+                }
+                if won {
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Color.gold, lineWidth: 2)
+                        .frame(width: 42, height: 42)
+                }
+            }
+            Rectangle().fill(isLast ? Color.clear : Color.hairline).frame(width: 2)
+                .frame(maxHeight: .infinity)
+        }
+        .frame(width: 44)
+        .accessibilityHidden(true)
     }
 
     private func standings(_ profile: TeamProfileResponse, eventID: Int) -> [TeamEventStanding] {
@@ -543,18 +729,45 @@ extension TeamProfileView {
         let awards = (profile.awards ?? []).filter { season == nil || $0.seasonId == season }
         if !awards.isEmpty {
             card {
-                SectionHeader("Awards")
-                ForEach(Array(awards.enumerated()), id: \.offset) { _, award in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Divider().overlay(Color.hairline)
-                        Text(award.title ?? "Award").font(.subheadline.weight(.medium))
-                        if let event = award.event {
-                            Text(event).font(.caption).foregroundStyle(.secondary)
-                        }
+                SectionHeader("Trophy cabinet", detail: "\(awards.count) award\(awards.count == 1 ? "" : "s") this season")
+                let columns = [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)]
+                LazyVGrid(columns: columns, spacing: 10) {
+                    ForEach(Array(awards.enumerated()), id: \.offset) { index, award in
+                        awardTile(award).entrance(index, shown: awardsShown)
                     }
                 }
+                .onFirstVisible { awardsShown = true }
             }
         }
+    }
+
+    /// Gold for the awards that win a place at the next level, the accent
+    /// for the rest.
+    private func awardTile(_ award: Award) -> some View {
+        let title = award.title ?? "Award"
+        let top = ["Excellence", "Champion", "Tournament Finalist", "Design", "Skills Champion"]
+            .contains { title.localizedCaseInsensitiveContains($0) }
+        let colour: Color = top ? .gold : theme.accent
+        // "Excellence Award (VRC/VEXU/VAIRC)" - the bracket is noise here.
+        let short = title.components(separatedBy: " (").first ?? title
+        return VStack(alignment: .leading, spacing: 8) {
+            StrokeIcon(.trophy, size: 22)
+                .foregroundStyle(colour)
+                .frame(width: 40, height: 40)
+                .background(colour.opacity(0.14), in: Circle())
+            Text(short).font(.subheadline.weight(.semibold)).lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            if let event = award.event {
+                Text(event).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, minHeight: 132, alignment: .topLeading)
+        .background(
+            LinearGradient(colors: [colour.opacity(0.10), theme.surfaceRaised], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -695,6 +908,76 @@ final class TeamProfileModel {
         if let rankings = await ranked, !program.isIQ || rankings.program == Program.viqrc.rawValue {
             resolvedRanking = rankings.rankings.first {
                 $0.number.caseInsensitiveCompare(number) == .orderedSame
+            }
+        }
+    }
+}
+
+/// The profile's sections in outline while they load: the season card with
+/// its ring and tiles, the rating chart, the first events - each where it
+/// will land, so nothing below moves when the real ones arrive.
+@available(iOS 17.0, *)
+private struct ProfilePlaceholder: View {
+    @Environment(\.vexTheme) private var theme
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            card {
+                PlaceholderBlock(width: 170, height: 18)
+                HStack(spacing: 18) {
+                    Circle().stroke(Color.white.opacity(0.08), lineWidth: 11)
+                        .frame(width: 101, height: 101)
+                        .padding(5.5)
+                    VStack(alignment: .leading, spacing: 10) {
+                        PlaceholderBlock(width: 150, height: 22)
+                        PlaceholderBlock(height: 10, radius: 5)
+                        PlaceholderBlock(width: 160, height: 10)
+                    }
+                }
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    ForEach(0..<4, id: \.self) { _ in
+                        VStack(alignment: .leading, spacing: 8) {
+                            PlaceholderBlock(width: 70, height: 10)
+                            PlaceholderBlock(width: 44, height: 22)
+                            PlaceholderBlock(width: 90, height: 8)
+                        }
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+            }
+            card {
+                PlaceholderBlock(width: 160, height: 18)
+                // A flat wave where the rating line will run.
+                ChartOutline()
+                    .stroke(Color.white.opacity(0.08), style: StrokeStyle(lineWidth: 3, lineCap: .round, lineJoin: .round))
+                    .frame(height: 150)
+            }
+            card {
+                PlaceholderBlock(width: 90, height: 18)
+                ForEach(0..<3, id: \.self) { row in
+                    PlaceholderRow(badge: true, lines: 3, trailing: false, seed: row)
+                }
+            }
+        }
+        .shimmering()
+        .loadingPlaceholder()
+    }
+
+    private func card<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 14, content: content).vexCard()
+    }
+}
+
+@available(iOS 17.0, *)
+private struct ChartOutline: Shape {
+    func path(in rect: CGRect) -> Path {
+        Path { path in
+            let ys: [CGFloat] = [0.7, 0.55, 0.62, 0.4, 0.45, 0.25, 0.32]
+            for (i, y) in ys.enumerated() {
+                let point = CGPoint(x: rect.width * CGFloat(i) / CGFloat(ys.count - 1), y: rect.height * y)
+                i == 0 ? path.move(to: point) : path.addLine(to: point)
             }
         }
     }

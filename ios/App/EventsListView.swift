@@ -16,6 +16,9 @@ struct EventsListView: View {
 
     @Environment(\.vexTheme) private var theme
     @State private var model = EventsModel()
+    /// Set once the list first shows, so its opening rows rise in order;
+    /// rows made after that (scrolling, refiltering) are simply there.
+    @State private var entered = false
     @State private var upcomingOnly = true
     @State private var query = ""
 
@@ -57,28 +60,27 @@ struct EventsListView: View {
     private var content: some View {
         switch model.state {
         case .loading:
-            ProgressView("Loading events…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PlaceholderList(badge: false, lines: 3, trailing: false)
         case .failed(let message):
             ContentUnavailableView {
-                Label("Could not load events", systemImage: "calendar.badge.exclamationmark")
+                Label("Could not load events", icon: .offline, size: 48, relativeTo: .largeTitle, drawsOn: true)
             } description: {
                 Text(message)
             } actions: {
                 Button("Retry") { Task { await model.load() } }
-                    .buttonStyle(.borderedProminent).tint(theme.accent)
+                    .buttonStyle(.borderedProminent).controlSize(.large).tint(theme.accent)
                     .foregroundStyle(theme.onAccent)
             }
         case .loaded(let events):
             let shown = filter(events)
             if shown.isEmpty, query.trimmingCharacters(in: .whitespaces).isEmpty {
                 ContentUnavailableView {
-                    Label("No upcoming events", systemImage: "calendar")
+                    Label("No upcoming events", icon: .calendar, size: 48, relativeTo: .largeTitle, drawsOn: true)
                 } description: {
                     Text("Nothing is on the calendar yet. Past events are under All.")
                 } actions: {
                     Button("Show all events") { upcomingOnly = false }
-                        .buttonStyle(.borderedProminent).tint(theme.accent)
+                        .buttonStyle(.borderedProminent).controlSize(.large).tint(theme.accent)
                         .foregroundStyle(theme.onAccent)
                 }
             } else if shown.isEmpty {
@@ -103,7 +105,8 @@ struct EventsListView: View {
     }
 
     private func list(_ events: [VEXEvent]) -> some View {
-        List(events) { event in
+        let order = Dictionary(events.prefix(10).enumerated().map { ($1.id, $0) }) { a, _ in a }
+        return List(events) { event in
             NavigationLink(value: event.ref) {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
@@ -115,10 +118,12 @@ struct EventsListView: View {
                     // "Upcoming" in a red date, so the one event worth
                     // opening now looked like all the others.
                     if live {
-                        Label("Live", systemImage: "circle.fill")
-                            .font(.caption2.weight(.bold))
-                            .labelStyle(LiveLabelStyle())
-                            .foregroundStyle(theme.accent)
+                        HStack(spacing: 5) {
+                            LiveDot()
+                            Text("Live")
+                        }
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(theme.accent)
                     } else if let status = event.status, status != "Upcoming" {
                         Text(status).font(.caption2).foregroundStyle(.subtle)
                     }
@@ -133,7 +138,7 @@ struct EventsListView: View {
                 Text(event.name).font(.subheadline.weight(.semibold)).lineLimit(2)
                 HStack(spacing: 6) {
                     if !event.place.isEmpty {
-                        Label(event.place, systemImage: "mappin.and.ellipse")
+                        Label(event.place, icon: .pin, size: 13, relativeTo: .caption)
                     }
                     if let teams = event.teams, teams > 0 {
                         Text("· \(teams) teams")
@@ -143,9 +148,11 @@ struct EventsListView: View {
             }
             .padding(.vertical, 4)
             }
-            .listRowBackground(theme.surface)
+            .entrance(order[event.id] ?? 10, shown: entered)
+                .listRowBackground(theme.surface)
         }
         .listStyle(.plain)
+        .task { entered = true }
         .scrollContentBackground(.hidden)
         .refreshable { await model.load() }
     }
@@ -154,15 +161,6 @@ struct EventsListView: View {
 /// A small dot before the word, sized to the text rather than the symbol's
 /// default, so "Live" reads as a status and not as an icon button.
 @available(iOS 17.0, *)
-private struct LiveLabelStyle: LabelStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        HStack(spacing: 4) {
-            configuration.icon.font(.system(size: 6))
-            configuration.title
-        }
-    }
-}
-
 @available(iOS 17.0, *)
 @Observable
 final class EventsModel {

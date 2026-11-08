@@ -1,8 +1,19 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Merged into the generated Info.plist. Only keys Xcode cannot generate. -->
 <plist version="1.0">
 <dict>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.vexrank.app.tournament</string>
+	</array>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>fetch</string>
+	</array>
 	<key>VEXDirectToken</key>
 	<string>$(VEX_DIRECT_TOKEN)</string>
 </dict>

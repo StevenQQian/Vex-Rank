@@ -54,7 +54,7 @@ struct BracketView: View {
                                                                  division: divisionLabel)) {
                                 card(slot)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(.pressable)
                         } else {
                             // The empty slot is kept so later rounds stay level
                             // with the matches that feed them.
@@ -137,7 +137,7 @@ struct BracketView: View {
                 .background(theme.surfaceRaised)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable)
             .frame(height: Self.slotHeight * pow(2, CGFloat(depth)), alignment: .center)
         }
         .frame(width: Self.columnWidth)

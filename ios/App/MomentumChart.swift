@@ -16,13 +16,20 @@ struct MomentumChart: View {
     private static let duration: Double = 1.1
 
     @State private var start: Date?
+    /// Pauses the timeline once drawn; see GrowingRatingChart.
+    @State private var finished = false
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
             if let start {
-                TimelineView(.animation) { timeline in
-                    chart(progress: RatingCurve.eased(timeline.date.timeIntervalSince(start) / Self.duration))
+                TimelineView(.animation(paused: finished)) { timeline in
+                    let elapsed = finished ? Self.duration : timeline.date.timeIntervalSince(start)
+                    chart(progress: RatingCurve.eased(elapsed / Self.duration))
+                }
+                .task(id: start) {
+                    try? await Task.sleep(for: .seconds(max(0, Self.duration - Date.now.timeIntervalSince(start)) + 0.05))
+                    finished = true
                 }
             } else {
                 chart(progress: 0)

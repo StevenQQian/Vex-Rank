@@ -17,7 +17,7 @@ struct ServiceBanner: View {
     var body: some View {
         if let update = store.pendingUpdate {
             banner(
-                icon: store.updateStatus == .required ? "exclamationmark.triangle.fill" : "arrow.down.circle.fill",
+                icon: store.updateStatus == .required ? .warning : .download,
                 title: store.updateStatus == .required ? "Update required" : "Update available",
                 detail: update.notes ?? update.version.map { "Version \($0) is ready to install." },
                 action: update.link.map { link in ("Get it", { openURL(link) }) },
@@ -27,7 +27,7 @@ struct ServiceBanner: View {
             )
         } else if let note = store.pendingAnnouncement {
             banner(
-                icon: "megaphone.fill",
+                icon: .megaphone,
                 title: note.title,
                 detail: note.body,
                 action: note.link.map { link in ("Open", { openURL(link) }) },
@@ -36,15 +36,14 @@ struct ServiceBanner: View {
         }
     }
 
-    private func banner(icon: String,
+    private func banner(icon: VEXIcon,
                         title: String,
                         detail: String?,
                         action: (label: String, run: () -> Void)?,
                         dismiss: (() -> Void)?) -> some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: icon)
+            StrokeIcon(icon, size: 22, relativeTo: .title3)
                 .foregroundStyle(theme.accent)
-                .font(.title3)
                 .accessibilityHidden(true)
 
             VStack(alignment: .leading, spacing: 2) {
@@ -69,15 +68,14 @@ struct ServiceBanner: View {
 
             if let dismiss {
                 Button(action: dismiss) {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.bold))
+                    StrokeIcon(.close, size: 12, relativeTo: .caption)
                         .foregroundStyle(.secondary)
                         // A 12pt glyph, but a 44pt target: it sat a few points
                         // from the tab bar and was easy to miss.
                         .frame(width: 44, height: 44)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressable)
                 .padding(.vertical, -12)
                 .padding(.trailing, -12)
                 .accessibilityLabel("Dismiss")

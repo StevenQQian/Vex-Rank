@@ -16,15 +16,23 @@ struct GrowingRatingChart: View {
     private static let duration: Double = 1.25
 
     @State private var start: Date?
+    /// Set once the curve has fully drawn. The timeline is then paused: left
+    /// running, it recut and redrew the whole chart every frame for as long
+    /// as the profile stayed open - a third of a core, doing nothing.
+    @State private var finished = false
     @Environment(\.revealViewportHeight) private var viewportHeight
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         Group {
             if let start {
-                TimelineView(.animation) { timeline in
-                    let elapsed = timeline.date.timeIntervalSince(start)
+                TimelineView(.animation(paused: finished)) { timeline in
+                    let elapsed = finished ? Self.duration : timeline.date.timeIntervalSince(start)
                     chart(progress: RatingCurve.eased(elapsed / Self.duration))
+                }
+                .task(id: start) {
+                    try? await Task.sleep(for: .seconds(max(0, Self.duration - Date.now.timeIntervalSince(start)) + 0.05))
+                    finished = true
                 }
             } else {
                 // Axes from the first frame, so the box holds its height and
@@ -38,7 +46,18 @@ struct GrowingRatingChart: View {
     private func chart(progress: Double) -> some View {
         let samples = RatingCurve.growing(history, progress: progress)
         let labels = RatingCurve.axisLabels(history)
+        let floor = RatingCurve.ratingDomain(history).lowerBound
         return Chart {
+            // A wash of the accent under the line, fading to nothing at the
+            // axis, so the season reads as a shape before it is read as dots.
+            ForEach(samples) { sample in
+                AreaMark(x: .value("Event", sample.x),
+                         yStart: .value("Floor", floor),
+                         yEnd: .value("Rating", sample.rating))
+                    .foregroundStyle(LinearGradient(colors: [accent.opacity(0.35), accent.opacity(0)],
+                                                    startPoint: .top, endPoint: .bottom))
+                    .interpolationMethod(.monotone)
+            }
             ForEach(samples) { sample in
                 LineMark(x: .value("Event", sample.x), y: .value("Rating", sample.rating))
                     .foregroundStyle(accent)

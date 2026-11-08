@@ -9,6 +9,9 @@ struct StatLeadersView: View {
     @Environment(\.vexTheme) private var theme
     @Environment(\.program) private var program
     @State private var model = StatLeadersModel()
+    /// Set once the list first shows, so its opening rows rise in order;
+    /// rows made after that (scrolling, refiltering) are simply there.
+    @State private var entered = false
     /// Nil until the reader picks one: the first category differs by program.
     @State private var chosen: StatCategory?
     @State private var country: String?
@@ -53,14 +56,14 @@ struct StatLeadersView: View {
         let options = model.countries(for: category)
         if !options.isEmpty {
             Menu {
-                Button("All regions") { country = nil }
+                Button("All regions") { Haptics.selection(); country = nil }
                 ForEach(options, id: \.self) { name in
-                    Button(name) { country = name }
+                    Button(name) { Haptics.selection(); country = name }
                 }
             } label: {
-                FilterPill(country ?? "All regions", icon: "globe", isActive: country != nil)
+                FilterPill(country ?? "All regions", icon: .globe, isActive: country != nil)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable)
         }
     }
 
@@ -68,25 +71,26 @@ struct StatLeadersView: View {
     private var content: some View {
         switch model.state {
         case .loading:
-            ProgressView("Loading leaderboards…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PlaceholderList()
         case .failed(let message):
             ContentUnavailableView {
-                Label("Could not load leaderboards", systemImage: "wifi.exclamationmark")
+                Label("Could not load leaderboards", icon: .offline, size: 48, relativeTo: .largeTitle, drawsOn: true)
             } description: {
                 Text(message)
             } actions: {
                 Button("Retry") { Task { await model.load(program: program) } }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent).controlSize(.large)
                     .tint(theme.accent)
                     .foregroundStyle(theme.onAccent)
             }
         case .loaded:
             let rows = model.rank(category: category, country: country)
             if rows.isEmpty {
-                ContentUnavailableView("No qualifying teams",
-                                       systemImage: "chart.bar",
-                                       description: Text("No team meets this category's threshold\(country.map { " in \($0)" } ?? "")."))
+                ContentUnavailableView {
+                    Label("No qualifying teams", icon: .stats, size: 48, relativeTo: .largeTitle, drawsOn: true)
+                } description: {
+                    Text("No team meets this category's threshold\(country.map { " in \($0)" } ?? "").")
+                }
             } else {
                 list(rows)
             }
@@ -94,28 +98,44 @@ struct StatLeadersView: View {
     }
 
     private func list(_ rows: [StatLeader]) -> some View {
-        List {
+        let leader = rows.first?.value ?? 1
+        return List {
             ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
                 if row.opensProfile {
-                    NavigationLink(value: TeamRef(row.number)) { cell(index: index, row: row) }
+                    NavigationLink(value: TeamRef(row.number)) { cell(index: index, row: row, leader: leader) }
+                        .entrance(index, shown: entered)
                         .listRowBackground(theme.surface)
                 } else {
-                    cell(index: index, row: row).listRowBackground(theme.surface)
+                    cell(index: index, row: row, leader: leader)
+                        .entrance(index, shown: entered)
+                        .listRowBackground(theme.surface)
                 }
             }
         }
         .listStyle(.plain)
+        .task { entered = true }
         .scrollContentBackground(.hidden)
-        .refreshable { await model.load(program: program) }
+        .refreshable { await model.load(program: program, force: true) }
     }
 
-    private func cell(index: Int, row: StatLeader) -> some View {
-        HStack(spacing: 14) {
-            Text("#\(index + 1)")
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .leading)
-                .monospacedDigit()
+    private func cell(index: Int, row: StatLeader, leader: Double) -> some View {
+        // How close this team is to the leader, as a share of the leader's
+        // figure - inverted where lower is better.
+        let share = category.lowerIsBetter
+            ? (row.value > 0 ? leader / row.value : 1)
+            : (leader > 0 ? row.value / leader : 0)
+        return HStack(spacing: 14) {
+            Group {
+                if index < 3 {
+                    PlaceBadge(index + 1, size: 32)
+                } else {
+                    Text("#\(index + 1)")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+            .frame(width: 44, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(row.number).font(.headline)
@@ -126,9 +146,14 @@ struct StatLeadersView: View {
 
             Spacer(minLength: 8)
 
-            Text(row.formattedValue(digits: category.fractionDigits))
-                .font(.system(.title3, design: .rounded, weight: .semibold))
-                .monospacedDigit()
+            VStack(alignment: .trailing, spacing: 5) {
+                Text(row.formattedValue(digits: category.fractionDigits))
+                    .font(.system(.title3, design: .rounded, weight: .semibold))
+                    .monospacedDigit()
+                LevelBar(fraction: share, colour: Color.medal(index + 1) ?? theme.accent, height: 4,
+                         animated: false)
+                    .frame(width: 64)
+            }
         }
         .padding(.vertical, 4)
     }
@@ -152,8 +177,13 @@ final class StatLeadersModel {
     private var skills: [SkillsEntry] = []
     private let api = VEXRankAPI.shared
 
+    /// See RankingsModel: returning to the tab does not refetch both feeds
+    /// and re-rank every board if they are only minutes old.
+    @ObservationIgnored private var fetched: Date?
+
     @MainActor
-    func load(program: Program = .v5rc) async {
+    func load(program: Program = .v5rc, force: Bool = false) async {
+        if !force, state.isLoaded, let fetched, Date.now.timeIntervalSince(fetched) < 300 { return }
         // A pull to refresh keeps the board on screen; only a first load, or a
         // retry after a failure, shows the spinner. Swapping the list for a
         // spinner mid-pull yanked the rows out from under the finger.
@@ -166,6 +196,9 @@ final class StatLeadersModel {
             async let skillsFeed = api.skills()
             teams = try await rankings?.rankings ?? []
             skills = try await skillsFeed.rankings
+            ranked = [:]
+            countryLists = [:]
+            fetched = .now
             state = .loaded
         } catch {
             if state.isLoaded { return }
@@ -173,11 +206,25 @@ final class StatLeadersModel {
         }
     }
 
+    /// Each board ranked once per feed, not once per redraw: ranking means
+    /// filtering and sorting thousands of teams, and the body asks again on
+    /// every frame of every animation on the screen. Ignored by observation
+    /// so filling them from a body does not schedule another.
+    @ObservationIgnored private var ranked: [String: [StatLeader]] = [:]
+    @ObservationIgnored private var countryLists: [String: [String]] = [:]
+
     func rank(category: StatCategory, country: String?) -> [StatLeader] {
-        StatLeaders.rank(category: category, teams: teams, skills: skills, country: country)
+        let key = "\(category.id)|\(country ?? "")"
+        if let known = ranked[key] { return known }
+        let rows = StatLeaders.rank(category: category, teams: teams, skills: skills, country: country)
+        ranked[key] = rows
+        return rows
     }
 
     func countries(for category: StatCategory) -> [String] {
-        StatLeaders.countries(category: category, teams: teams, skills: skills)
+        if let known = countryLists[category.id] { return known }
+        let found = StatLeaders.countries(category: category, teams: teams, skills: skills)
+        countryLists[category.id] = found
+        return found
     }
 }

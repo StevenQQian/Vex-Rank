@@ -3,9 +3,16 @@ import VEXRankKit
 
 @available(iOS 17.0, *)
 struct RankingsListView: View {
+    /// Pushes a team onto the tab's stack - for the podium, whose three steps
+    /// share one list row, where NavigationLinks would draw three chevrons
+    /// and the row could not tell which was tapped.
+    var open: (TeamRef) -> Void = { _ in }
     @Environment(\.vexTheme) private var theme
     @Environment(\.program) private var program
     @State private var model = RankingsModel()
+    /// Set once the list first shows, so its opening rows rise in order;
+    /// rows made after that (scrolling, refiltering) are simply there.
+    @State private var entered = false
     @State private var filter = RankingFilter()
 
     var body: some View {
@@ -16,18 +23,17 @@ struct RankingsListView: View {
         Group {
             switch model.state {
             case .loading:
-                ProgressView("Loading world ranking…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                PlaceholderList()
             case .failed(let message):
                 // Says what went wrong and offers the way out, rather than an
                 // empty list that reads as "no teams exist".
                 ContentUnavailableView {
-                    Label("Could not load rankings", systemImage: "wifi.exclamationmark")
+                    Label("Could not load rankings", icon: .offline, size: 48, relativeTo: .largeTitle, drawsOn: true)
                 } description: {
                     Text(message)
                 } actions: {
                     Button("Retry") { Task { await model.load() } }
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.borderedProminent).controlSize(.large)
                         .tint(theme.accent)
                         .foregroundStyle(theme.onAccent)
                 }
@@ -41,9 +47,11 @@ struct RankingsListView: View {
                         .padding(.bottom, 12)
                     Divider().overlay(Color.hairline)
                     if shown.isEmpty {
-                        ContentUnavailableView("No teams match",
-                                               systemImage: "line.3.horizontal.decrease.circle",
-                                               description: Text("No team meets these filters."))
+                        ContentUnavailableView {
+                            Label("No teams match", icon: .filter, size: 48, relativeTo: .largeTitle, drawsOn: true)
+                        } description: {
+                            Text("No team meets these filters.")
+                        }
                     } else {
                         list(shown)
                     }
@@ -67,7 +75,7 @@ struct RankingsListView: View {
 
             HStack(spacing: 8) {
                 menu(title: filter.country ?? "All countries",
-                     icon: "globe",
+                     icon: .globe,
                      isActive: filter.country != nil,
                      options: RankingFilter.countries(teams),
                      reset: "All countries") { country in
@@ -77,7 +85,7 @@ struct RankingsListView: View {
                 }
 
                 menu(title: filter.region ?? "All regions",
-                     icon: "map",
+                     icon: .map,
                      isActive: filter.region != nil,
                      options: RankingFilter.regions(teams, country: filter.country),
                      reset: "All regions") { filter.region = $0 }
@@ -89,28 +97,46 @@ struct RankingsListView: View {
     }
 
     @ViewBuilder
-    private func menu(title: String, icon: String, isActive: Bool, options: [String], reset: String,
+    private func menu(title: String, icon: VEXIcon, isActive: Bool, options: [String], reset: String,
                       select: @escaping (String?) -> Void) -> some View {
         Menu {
-            Button(reset) { select(nil) }
+            Button(reset) { Haptics.selection(); select(nil) }
             ForEach(options, id: \.self) { option in
-                Button(option) { select(option) }
+                Button(option) { Haptics.selection(); select(option) }
             }
         } label: {
             FilterPill(title, icon: icon, isActive: isActive)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(.pressable)
     }
 
     private func list(_ teams: [TeamRanking]) -> some View {
         // No pagination cap: List recycles rows, so all 585 cost the same as 20.
-        List(teams) { team in
-            NavigationLink(value: TeamRef(team.number)) { row(team) }
+        let order = Dictionary(teams.prefix(10).enumerated().map { ($1.id, $0) }) { a, _ in a }
+        let low = Double(teams.last?.rating ?? 0)
+        let high = Double(teams.first?.rating ?? 1)
+        // The podium belongs to the unsearched list: a search for one team
+        // should show that team, not three others above it.
+        let podium = filter.search.isEmpty && teams.count >= 3 ? Array(teams.prefix(3)) : []
+        return List {
+            if !podium.isEmpty {
+                RankingPodium(teams: podium, open: open)
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(EdgeInsets(top: 12, leading: 16, bottom: 8, trailing: 16))
+            }
+            ForEach(teams) { team in
+                NavigationLink(value: TeamRef(team.number)) {
+                    row(team, level: high > low ? (Double(team.rating) - low) / (high - low) : 1)
+                }
+                .entrance(order[team.id] ?? 10, shown: entered)
                 .listRowBackground(theme.surface)
+            }
         }
         .listStyle(.plain)
+        .task { entered = true }
         .scrollContentBackground(.hidden)
-        .refreshable { await model.load() }
+        .refreshable { await model.load(force: true) }
     }
 
     /// The web's metric strip: how many teams the current filter leaves, how
@@ -129,13 +155,21 @@ struct RankingsListView: View {
         }
     }
 
-    private func row(_ team: TeamRanking) -> some View {
+    private func row(_ team: TeamRanking, level: Double) -> some View {
         HStack(spacing: 14) {
-            Text("#\(team.rank)")
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .leading)
-                .monospacedDigit()
+            Group {
+                if team.rank <= 3 {
+                    PlaceBadge(team.rank, size: 32)
+                } else {
+                    Text("#\(team.rank)")
+                        .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
+                }
+            }
+            .frame(width: 44, alignment: .leading)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(team.number).font(.headline)
@@ -149,10 +183,21 @@ struct RankingsListView: View {
 
             Spacer(minLength: 8)
 
-            VStack(alignment: .trailing, spacing: 2) {
+            // The last few events' rating changes, run together: which way
+            // the team is heading, where the number only says where it is.
+            if let form = team.form, form.count > 1 {
+                Sparkline(form.reduce(into: [0.0]) { $0.append($0.last! + Double($1.change)) }, animated: false)
+                    .frame(width: 44, height: 22)
+            }
+
+            VStack(alignment: .trailing, spacing: 4) {
                 Text("\(team.rating)")
                     .font(.system(.title3, design: .rounded, weight: .semibold))
                     .monospacedDigit()
+                // Where the rating sits between the bottom and top of the
+                // list on screen.
+                LevelBar(fraction: level, colour: theme.accent, height: 4, animated: false)
+                    .frame(width: 52)
                 Text("±\(team.confidence)").font(.caption2).foregroundStyle(.subtle)
                     .monospacedDigit()
             }
@@ -179,8 +224,15 @@ final class RankingsModel {
     private(set) var meta: (eventsProcessed: Int, matchesProcessed: Int)?
     private let api = VEXRankAPI.shared
 
+    /// When the table last came back from the server. Coming back to the tab
+    /// (from a profile, say) re-runs the screen's task, and refetching then
+    /// rebuilt all 3,000 rows under the reader's thumb for a ranking that
+    /// had not moved; a pull to refresh still forces it.
+    @ObservationIgnored private var fetched: Date?
+
     @MainActor
-    func load() async {
+    func load(force: Bool = false) async {
+        if !force, state.isLoaded, let fetched, Date.now.timeIntervalSince(fetched) < 300 { return }
         // Draw the table the app had last time while the current one is
         // fetched. A cold launch otherwise spends its first second on a spinner
         // in front of a ranking that has barely moved since the reader last
@@ -192,6 +244,7 @@ final class RankingsModel {
         }
         do {
             let response = try await api.rankings()
+            fetched = .now
             meta = (response.eventsProcessed, response.matchesProcessed)
             // Client-side ordering: the deployed Worker sorts by
             // rating - confidence while returning rating.
@@ -228,21 +281,21 @@ struct IQRankingsView: View {
                 .pickerStyle(.segmented)
                 HStack(spacing: 8) {
                     Menu {
-                        Picker("Season", selection: $season) {
+                        Picker("Season", selection: Binding(get: { season }, set: { Haptics.selection(); season = $0 })) {
                             ForEach(Program.iqSeasons, id: \.id) { Text($0.label).tag($0.id) }
                         }
                     } label: {
                         FilterPill(Program.iqSeasons.first { $0.id == season }?.label ?? "Season",
-                                   icon: "calendar", isActive: season != Program.iqSeasons[0].id)
+                                   icon: .calendar, isActive: season != Program.iqSeasons[0].id)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressable)
                     Menu {
-                        Button("All countries") { country = nil }
-                        ForEach(model.countries, id: \.self) { name in Button(name) { country = name } }
+                        Button("All countries") { Haptics.selection(); country = nil }
+                        ForEach(model.countries, id: \.self) { name in Button(name) { Haptics.selection(); country = name } }
                     } label: {
-                        FilterPill(country ?? "All countries", icon: "globe", isActive: country != nil)
+                        FilterPill(country ?? "All countries", icon: .globe, isActive: country != nil)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressable)
                     Spacer(minLength: 0)
                 }
             }
@@ -265,18 +318,17 @@ struct IQRankingsView: View {
     private var content: some View {
         if let message = model.error {
             ContentUnavailableView {
-                Label("Could not load world skills", systemImage: "wifi.exclamationmark")
+                Label("Could not load world skills", icon: .offline, size: 48, relativeTo: .largeTitle, drawsOn: true)
             } description: {
                 Text(message)
             } actions: {
                 Button("Retry") { Task { await model.load(season: season) } }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.borderedProminent).controlSize(.large)
                     .tint(theme.accent)
                     .foregroundStyle(theme.onAccent)
             }
         } else if !model.isLoaded {
-            ProgressView("Loading world skills…")
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            PlaceholderList()
         } else {
             let rows = shown
             List {
@@ -355,6 +407,8 @@ struct IQRankingsView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .leading)
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(team.number).font(.headline)
@@ -385,6 +439,8 @@ struct IQRankingsView: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 44, alignment: .leading)
                 .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             VStack(alignment: .leading, spacing: 2) {
                 Text(team.number).font(.headline)
                 Text(team.name).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
@@ -431,5 +487,73 @@ final class IQRankingsModel {
             ratings = response.sortedForDisplay
             modelVersion = response.modelVersion
         }
+    }
+}
+
+/// The top three, stood on a podium: first in the middle and highest, the
+/// steps rising in when the list first appears.
+@available(iOS 17.0, *)
+struct RankingPodium: View {
+    let teams: [TeamRanking]
+    let open: (TeamRef) -> Void
+    @Environment(\.vexTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var risen = false
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 8) {
+            step(teams[1], place: 2, height: 64, delay: 0.1)
+            step(teams[0], place: 1, height: 92, delay: 0)
+            step(teams[2], place: 3, height: 46, delay: 0.2)
+        }
+        .padding(.top, 8)
+        .onAppear {
+            guard !risen else { return }
+            if reduceMotion { risen = true } else { withAnimation(VEXMotion.arrive) { risen = true } }
+        }
+    }
+
+    private func step(_ team: TeamRanking, place: Int, height: CGFloat, delay: Double) -> some View {
+        let medal = Color.medal(place) ?? theme.accent
+        // A tap gesture, not a Button or NavigationLink: three of either in
+        // one list row were swallowed by the row's own tap handling.
+        return VStack(spacing: 6) {
+                VStack(spacing: 2) {
+                    Text(team.number)
+                        .font(.system(place == 1 ? .headline : .subheadline, design: .rounded, weight: .bold))
+                        .lineLimit(1).minimumScaleFactor(0.7)
+                    Text(team.name).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                    CountingNumber(team.rating)
+                        .font(.system(.footnote, design: .rounded, weight: .semibold))
+                        .foregroundStyle(medal)
+                }
+                .opacity(risen ? 1 : 0)
+                .animation(VEXMotion.arrive.delay(delay + 0.25), value: risen)
+
+                ZStack(alignment: .top) {
+                    UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12, style: .continuous)
+                        .fill(LinearGradient(colors: [medal.opacity(0.45), medal.opacity(0.06)],
+                                             startPoint: .top, endPoint: .bottom))
+                        .overlay(alignment: .top) {
+                            UnevenRoundedRectangle(topLeadingRadius: 12, topTrailingRadius: 12, style: .continuous)
+                                .fill(medal).frame(height: 3)
+                        }
+                    Text("\(place)")
+                        .font(.system(size: place == 1 ? 34 : 26, weight: .heavy, design: .rounded))
+                        .foregroundStyle(medal)
+                        .padding(.top, 8)
+                }
+                .frame(height: risen ? height : 0, alignment: .top)
+                .clipped()
+                .animation(.spring(duration: 0.7, bounce: 0.25).delay(delay), value: risen)
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 92 + 64, alignment: .bottom)
+            .contentShape(Rectangle())
+            .onTapGesture { Haptics.tap(); open(TeamRef(team.number)) }
+            .accessibilityElement(children: .ignore)
+            .accessibilityAddTraits(.isButton)
+            .accessibilityAction { open(TeamRef(team.number)) }
+            .accessibilityLabel("Place \(place), \(team.number) \(team.name), rating \(team.rating)")
     }
 }
