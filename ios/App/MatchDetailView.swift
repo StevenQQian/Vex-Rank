@@ -65,6 +65,10 @@ struct MatchDetailView: View {
             }
             .padding(.horizontal, 12).padding(.vertical, 9)
 
+            if game.isPlayed, let red = game.red?.score, let blue = game.blue?.score {
+                ScoreSplit(red: red, blue: blue)
+                    .padding(.horizontal, 12).padding(.bottom, 10)
+            }
             Divider().overlay(Color.hairline)
             alliance(game.red, colour: .allianceRed, label: "RED",
                      won: game.winner == "red", decided: game.winner != nil, played: game.isPlayed)
@@ -109,14 +113,16 @@ struct MatchDetailView: View {
                         HStack(spacing: 4) {
                             Text(number)
                                 .font(.system(size: 14, weight: .semibold, design: .rounded))
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 8, weight: .bold))
+                            StrokeIcon(.chevronRight, size: 9, relativeTo: .caption2)
                                 .foregroundStyle(.subtle)
                         }
                         .padding(.horizontal, 10).padding(.vertical, 6)
                         .background(theme.surfaceRaised, in: Capsule())
+                        // A 30pt pill; the FlowRow's 8pt gaps leave room to
+                        // reach 44 without overlapping a neighbour much.
+                        .hitArea(horizontal: 4, vertical: 7)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressable)
                 }
                 if numbers.isEmpty {
                     Text("Not posted").font(.caption).foregroundStyle(.subtle)
@@ -178,5 +184,43 @@ struct FlowRow: Layout {
         }
         if !row.indices.isEmpty { rows.append(row) }
         return rows
+    }
+}
+
+/// The two scores as one bar split between the alliances, the winner's side
+/// longer: the margin as a shape. Swings in from the middle when it appears.
+@available(iOS 17.0, *)
+private struct ScoreSplit: View {
+    let red: Int
+    let blue: Int
+    @State private var shown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let total = max(1, red + blue)
+        let share = shown ? Double(red) / Double(total) : 0.5
+        VStack(spacing: 4) {
+            GeometryReader { geo in
+                HStack(spacing: 2) {
+                    Rectangle().fill(Color.allianceRed).frame(width: max(0, (geo.size.width - 2) * share))
+                    Rectangle().fill(Color.allianceBlue)
+                }
+                .clipShape(Capsule())
+            }
+            .frame(height: 8)
+            HStack {
+                Text("\(Int((Double(red) / Double(total) * 100).rounded()))%")
+                Spacer()
+                Text("Margin \(abs(red - blue))").foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int((Double(blue) / Double(total) * 100).rounded()))%")
+            }
+            .font(.caption2.weight(.semibold)).monospacedDigit()
+        }
+        .onAppear {
+            if reduceMotion { shown = true } else { withAnimation(.spring(duration: 0.8, bounce: 0.2).delay(0.15)) { shown = true } }
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Red \(red), blue \(blue), margin \(abs(red - blue))")
     }
 }

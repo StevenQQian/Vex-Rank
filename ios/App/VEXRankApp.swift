@@ -57,7 +57,7 @@ struct VEXRankApp: App {
         WindowGroup {
             TabView(selection: $tab) {
                 NavigationStack(path: $path) {
-                    RankingsListView()
+                    RankingsListView(open: { path.append($0) })
                         .navigationTitle("World ranking")
                         .navigationDestination(for: TeamRef.self) { TeamProfileView(ref: $0) }
                         .navigationDestination(for: EventRef.self) { EventDetailView(event: $0) }
@@ -66,7 +66,7 @@ struct VEXRankApp: App {
                         .toolbar { teamBadge; themeMenu }
                 }
                 .serviceBanner(config)
-                .tabItem { Label("Rankings", systemImage: "trophy") }
+                .tabItem { Label { Text("Rankings") } icon: { VEXIcon.podium.image() } }
                 .tag(0)
 
                 NavigationStack(path: $eventPath) {
@@ -83,7 +83,7 @@ struct VEXRankApp: App {
                         .toolbar { teamBadge; themeMenu }
                 }
                 .serviceBanner(config)
-                .tabItem { Label("Events", systemImage: "calendar") }
+                .tabItem { Label { Text("Events") } icon: { VEXIcon.calendar.image() } }
                 .tag(1)
 
                 NavigationStack(path: $statPath) {
@@ -96,7 +96,7 @@ struct VEXRankApp: App {
                         .toolbar { teamBadge; themeMenu }
                 }
                 .serviceBanner(config)
-                .tabItem { Label("Stats", systemImage: "chart.bar") }
+                .tabItem { Label { Text("Stats") } icon: { VEXIcon.stats.image() } }
                 .tag(2)
 
                 NavigationStack(path: $teamsPath) {
@@ -109,7 +109,7 @@ struct VEXRankApp: App {
                         .toolbar { teamBadge; themeMenu }
                 }
                 .serviceBanner(config)
-                .tabItem { Label("Teams", systemImage: "person.3") }
+                .tabItem { Label { Text("Teams") } icon: { VEXIcon.robot.image() } }
                 .tag(3)
             }
             .task {
@@ -117,10 +117,18 @@ struct VEXRankApp: App {
                 // a refresh behind a working app, not a gate in front of one.
                 await config.refresh(using: .shared)
             }
+            // A tournament mode left on by the last launch picks up again;
+            // the phase change below does not fire for the first appearance.
+            .task { TournamentModeController.shared.resume() }
             .onChange(of: scenePhase) { _, phase in
+                // Tournament mode refreshes its Live Activity on a loop while
+                // the app is open and hands over to background refresh when
+                // it is not.
+                if phase == .background { TournamentModeController.shared.pause() }
                 // A reader who leaves the app open for a weekend of matches
                 // would otherwise never pick up a change.
                 guard phase == .active else { return }
+                TournamentModeController.shared.resume()
                 Task { await config.refresh(using: .shared) }
             }
             .task(id: Self.launchArgument("-openmatch")) {
@@ -156,6 +164,12 @@ struct VEXRankApp: App {
             .environment(\.numberFont, StrokeFont.named(numberFontID))
             .preferredColorScheme(.dark)
             .tint(VEXTheme.named(themeID).accent)
+        }
+        // Tournament mode's refresh while the app is closed. iOS decides when
+        // it runs; each run asks for the next.
+        .backgroundTask(.appRefresh(TournamentModeController.refreshTaskID)) {
+            await TournamentModeController.shared.refresh()
+            await TournamentModeController.shared.scheduleBackgroundRefresh()
         }
     }
 
@@ -211,13 +225,13 @@ struct VEXRankApp: App {
                 }
                 Section {
                     Button { showAbout = true } label: {
-                        Label("About Scouting Cat", systemImage: "info.circle")
+                        Label { Text("About Scouting Cat") } icon: { VEXIcon.info.image(size: 22) }
                     }
                 }
             } label: {
                 // Neutral: settings are visited rarely, and an accent icon in
                 // every tab's corner outshouted the content under it.
-                Image(systemName: "slider.horizontal.3")
+                VEXIcon.settings.image(size: 22)
             }
             // The toolbar tints its items with the app accent, which wins
             // over a foreground style on the label.

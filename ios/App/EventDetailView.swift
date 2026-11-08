@@ -132,12 +132,12 @@ struct EventDetailView: View {
                 if divisions.count > 1, selected?.isPerDivision == true {
                     Menu {
                         ForEach(divisions) { option in
-                            Button(option.name) { divisionID = option.id }
+                            Button(option.name) { Haptics.selection(); divisionID = option.id }
                         }
                     } label: {
-                        FilterPill(division?.name ?? "Division", icon: "square.split.2x1", isActive: false)
+                        FilterPill(division?.name ?? "Division", icon: .divisions, isActive: false)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressable)
                 }
 
                 // V5 only: the other orders are fitted ratings, which need an opponent.
@@ -146,6 +146,7 @@ struct EventDetailView: View {
                     Menu {
                         ForEach(sorts) { option in
                             Button {
+                                Haptics.selection()
                                 sort = option
                             } label: {
                                 // Says which way the column runs, because for
@@ -157,9 +158,9 @@ struct EventDetailView: View {
                         }
                     } label: {
                         FilterPill(sort == .rank ? "Seeding rank" : "By \(sort.rawValue)",
-                                   icon: "arrow.up.arrow.down", isActive: sort != .rank)
+                                   icon: .sort, isActive: sort != .rank)
                     }
-                    .buttonStyle(.plain)
+                    .buttonStyle(.pressable)
                 }
                 Spacer(minLength: 0)
             }
@@ -178,24 +179,24 @@ struct EventDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(event.name).font(.headline)
                     if let day = event.day {
-                        Label(day.formatted(date: .long, time: .omitted), systemImage: "calendar")
+                        Label(day.formatted(date: .long, time: .omitted), icon: .calendar, size: 19, relativeTo: .subheadline)
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                     let venue = detail?.event.venueLine ?? event.place
                     if !venue.isEmpty {
-                        Label(venue, systemImage: "mappin.and.ellipse")
+                        Label(venue, icon: .pin, size: 19, relativeTo: .subheadline)
                             .font(.subheadline).foregroundStyle(.secondary)
                     }
                     if let url = detail?.event.official ?? OfficialLinks.event(officialUrl: nil, sku: nil) {
                         Link(destination: url) {
                             HStack(spacing: 6) {
-                                Image(systemName: "safari")
+                                StrokeIcon(.compass, size: 16, relativeTo: .subheadline)
                                 Text("View on events.vex.com").font(.subheadline)
-                                Image(systemName: "arrow.up.right").font(.caption2)
+                                StrokeIcon(.external, size: 13, relativeTo: .caption2)
                             }
                             .foregroundStyle(theme.accent)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressable)
                         .padding(.top, 2)
                     }
                     if let updated = model.updated {
@@ -203,7 +204,7 @@ struct EventDetailView: View {
                         // old what they are looking at is.
                         Label(model.isLive ? "Updating · \(updated.formatted(date: .omitted, time: .standard))"
                                            : "Updated \(updated.formatted(date: .omitted, time: .shortened))",
-                              systemImage: model.isLive ? "dot.radiowaves.left.and.right" : "clock")
+                              icon: model.isLive ? .live : .clock, size: 13, relativeTo: .caption2)
                             .font(.caption2)
                             .foregroundStyle(model.isLive ? theme.accent : .secondary)
                     }
@@ -217,9 +218,17 @@ struct EventDetailView: View {
             if let team = event.focusTeam, model.hasMatches(for: team) {
                 Section {
                     NavigationLink(value: TeamEventRef(event: event, team: team)) {
-                        Label("\(team)'s matches at this event", systemImage: "list.bullet.rectangle")
+                        Label("\(team)'s matches at this event", icon: .list, size: 18, relativeTo: .subheadline)
                             .font(.subheadline.weight(.medium))
                     }
+                }
+                .listRowBackground(theme.surface)
+            }
+
+            if let team = event.focusTeam, let detail,
+               TournamentModeCard.isAvailable(team: team, detail: detail) {
+                Section {
+                    TournamentModeCard(team: team, event: event, detail: detail)
                 }
                 .listRowBackground(theme.surface)
             }
@@ -234,7 +243,14 @@ struct EventDetailView: View {
                 }
                 .listRowBackground(theme.surface)
             } else {
-                Section { ProgressView() }.listRowBackground(theme.surface)
+                // The shape of the standings that are on their way.
+                Section {
+                    ForEach(0..<6, id: \.self) { row in
+                        PlaceholderRow(seed: row).shimmering()
+                    }
+                }
+                .listRowBackground(theme.surface)
+                .loadingPlaceholder()
             }
         }
         .listStyle(.insetGrouped)
@@ -717,9 +733,15 @@ struct EventDetailView: View {
     @ViewBuilder
     private func revealButton(total: Int, key: String, noun: String) -> some View {
         if total > Self.previewRows && !expanded.contains(key) {
-            Button("Show all \(total) \(noun)") { expanded.insert(key) }
-                .font(.footnote.weight(.semibold))
-                .tint(theme.accent)
+            Button {
+                expanded.insert(key)
+            } label: {
+                Text("Show all \(total) \(noun)")
+                    .font(.footnote.weight(.semibold))
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .tint(theme.accent)
         }
     }
 }

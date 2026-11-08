@@ -74,6 +74,10 @@ public struct Metric: View {
                 .monospacedDigit()
                 .lineLimit(1)
                 .minimumScaleFactor(0.7)
+                // A figure that changes - a filter narrowing the count, a live
+                // refresh - rolls to its new value rather than blinking.
+                .contentTransition(.numericText())
+                .animation(VEXMotion.snap, value: value)
             if let detail {
                 Text(detail).font(.caption2).foregroundStyle(.subtle).lineLimit(1)
             }
@@ -93,10 +97,10 @@ public struct Metric: View {
 public struct FilterPill: View {
     @Environment(\.vexTheme) private var theme
     private let title: String
-    private let icon: String
+    private let icon: VEXIcon
     private let isActive: Bool
 
-    public init(_ title: String, icon: String, isActive: Bool) {
+    public init(_ title: String, icon: VEXIcon, isActive: Bool) {
         self.title = title
         self.icon = icon
         self.isActive = isActive
@@ -104,9 +108,9 @@ public struct FilterPill: View {
 
     public var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: icon).font(.caption)
+            StrokeIcon(icon, size: 13, relativeTo: .footnote)
             Text(title).lineLimit(1)
-            Image(systemName: "chevron.down").font(.caption2.weight(.bold))
+            StrokeIcon(.chevronDown, size: 10, relativeTo: .footnote)
                 .foregroundStyle(isActive ? theme.onAccent.opacity(0.8) : Color.subtle)
         }
         .font(.footnote.weight(.semibold))
@@ -114,6 +118,8 @@ public struct FilterPill: View {
         .padding(.horizontal, 12)
         .frame(minHeight: 34)
         .background(isActive ? theme.accent : theme.surface, in: Capsule())
+        // Narrowing the list fills the pill rather than swapping it.
+        .animation(VEXMotion.snap, value: isActive)
         // The pill is 34pt; the target around it is the 44pt a thumb needs.
         .frame(minHeight: 44)
         .contentShape(Rectangle())

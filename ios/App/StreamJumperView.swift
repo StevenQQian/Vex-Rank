@@ -213,9 +213,9 @@ struct JumperPanel: View {
                         .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
                 Spacer()
-                Button { addingLink = true } label: { Image(systemName: "plus") }
+                Button { addingLink = true } label: { StrokeIcon(.plus, size: 18).frame(width: 44, height: 44) }
                     .accessibilityLabel("Add a stream link")
-                Button { jumper.isOpen = false } label: { Image(systemName: "xmark") }
+                Button { jumper.isOpen = false } label: { StrokeIcon(.close, size: 16).frame(width: 44, height: 44) }
                     .accessibilityLabel("Close livestream")
             }
             .font(.footnote.weight(.semibold))
@@ -246,14 +246,16 @@ struct JumperPanel: View {
                 HStack(spacing: 4) {
                     ForEach(Self.skips, id: \.self) { delta in
                         Button {
+                            Haptics.tap()
                             jumper.skip(delta)
                         } label: {
                             Text("\(delta < 0 ? "−" : "+")\(abs(delta) >= 60 ? "\(Int(abs(delta) / 60))m" : "\(Int(abs(delta)))s")")
                                 .font(.system(size: 11, design: .monospaced))
-                                .frame(maxWidth: .infinity, minHeight: 28)
-                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 5))
+                                .frame(maxWidth: .infinity, minHeight: 36)
+                                .background(Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                                .hitArea(vertical: 4)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.pressable)
                         .accessibilityLabel("Skip \(delta < 0 ? "back" : "forward") \(Int(abs(delta))) seconds")
                     }
                 }
@@ -331,13 +333,14 @@ struct JumpButton: View {
 
     var body: some View {
         if let target = jumper.jump(for: matchId) {
-            Button { jumper.jump(to: matchId) } label: {
-                Image(systemName: "play.fill")
-                    .font(.system(size: 9, weight: .bold))
+            Button { Haptics.tap(); jumper.jump(to: matchId) } label: {
+                StrokeIcon(.play, size: 10)
+                    .offset(x: 1)
                     .frame(width: 22, height: 22)
                     .overlay(Circle().stroke(Color.white.opacity(0.2)))
+                    .hitArea(horizontal: 11, vertical: 11)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable)
             .foregroundStyle(theme.accent)
             .accessibilityLabel("Watch \(name) on the livestream, at \(target.estimated ? "about " : "")\(StreamJumper.videoTime(Double(target.seconds)))")
         }
@@ -352,7 +355,7 @@ struct WatchButton: View {
 
     var body: some View {
         Button { jumper.open() } label: {
-            Label(jumper.streams.isEmpty ? "Add livestream" : "Watch livestream", systemImage: "play.rectangle")
+            Label(jumper.streams.isEmpty ? "Add livestream" : "Watch livestream", icon: .stream, size: 15, relativeTo: .caption)
                 .font(.caption.weight(.semibold))
         }
         .tint(theme.accent)
