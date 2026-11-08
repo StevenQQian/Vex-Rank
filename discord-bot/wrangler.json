@@ -1,0 +1,9 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "scouting-cat-verify",
+  "account_id": "c964d50e49b874b896f0b4e865d0ab9e",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-14",
+  "workers_dev": true,
+  "preview_urls": false
+}
